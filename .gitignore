@@ -1,0 +1,20 @@
+.env
+venv
+venv_skills
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# IDE/editor
+.idea/
+
+# App runtime dirs
+logs/
+tmp/
+
+# Streamlit cache (if any)
+.streamlit/
+
+# Packaging artifacts
+*.egg-info/
