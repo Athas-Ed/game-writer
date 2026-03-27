@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+import sys
 from typing import Any, Dict, List, Optional
 
 
@@ -14,9 +15,14 @@ class SkillsState:
 
 def _safe_read_text(path: Path) -> str:
     try:
-        return path.read_text(encoding="utf-8")
+        # 优先按 UTF-8（含 BOM）读取
+        return path.read_text(encoding="utf-8-sig")
     except Exception:
-        return ""
+        try:
+            # 兼容部分 Windows 环境中被保存为本地代码页（如 GBK）的 Markdown
+            return path.read_text(encoding="gbk", errors="replace")
+        except Exception:
+            return ""
 
 
 def _load_module(module_name: str, file_path: Path):
@@ -24,7 +30,15 @@ def _load_module(module_name: str, file_path: Path):
     if spec is None or spec.loader is None:
         raise RuntimeError(f"无法加载模块: {file_path}")
     module = module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # 兼容 dataclasses / typing 等在导入期依赖 sys.modules 的场景。
+    # module_from_spec 不会自动注册到 sys.modules；但正常 import 会。
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        # 避免残留半初始化模块影响后续诊断/重试
+        sys.modules.pop(module_name, None)
+        raise
     return module
 
 

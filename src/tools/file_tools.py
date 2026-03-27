@@ -1,6 +1,7 @@
 import os
 import re
 import difflib
+import shutil
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
@@ -396,3 +397,66 @@ def delete_files(payload: str, *, allowed_prefixes: Sequence[str] = ("data/",)) 
         lines.extend([f"- {p}" for p in failed])
 
     return "\n".join(lines).strip()
+
+
+def delete_directory(payload: str, *, allowed_prefixes: Sequence[str] = ("data/",)) -> str:
+    """
+    删除目录（文件夹）。
+
+    输入格式（尽量宽松）：
+    - "data/背景设定/未分类/临时"
+    - "data/背景设定/未分类/临时 recursive=true"
+    - "path=data/背景设定/未分类/临时 recursive=1"
+
+    规则：
+    - 默认仅允许删除 data/ 下的目录
+    - 默认不递归：目录非空则失败
+    - 递归删除需显式指定 recursive=true/1/yes 或包含 "递归"
+    """
+    raw = (payload or "").strip().replace("\\", "/")
+    if not raw:
+        return "删除目录失败：未提供目录路径。"
+
+    # 解析 path=... 或直接给路径
+    m = re.search(r"(?:^|\s)(?:path|dir)\s*=\s*([^\s]+)", raw, re.IGNORECASE)
+    rel = (m.group(1).strip() if m else raw.split()[0].strip()).strip("`\"' ")
+    recursive = bool(
+        re.search(r"(?:^|\s)recursive\s*=\s*(1|true|yes)\b", raw, re.IGNORECASE)
+        or ("递归" in raw)
+    )
+
+    try:
+        rel_request = _norm_rel_path(rel)
+    except Exception as e:
+        return f"删除目录失败：{e}"
+
+    # 允许以 / 结尾（目录语义），统一去掉
+    rel_request = rel_request.rstrip("/")
+
+    # 安全：限定前缀（默认 data/）
+    ok = any(rel_request.startswith(prefix.rstrip("/")) for prefix in allowed_prefixes)
+    if not ok:
+        return f"删除目录失败：禁止删除：仅允许删除 {', '.join(allowed_prefixes)} 下的目录。当前为：{rel_request}"
+
+    # 进一步安全：不允许删掉根前缀本身（例如 data）
+    if rel_request in {p.rstrip("/") for p in allowed_prefixes}:
+        return f"删除目录失败：禁止删除根目录：{rel_request}"
+
+    full_path = PROJECT_ROOT / rel_request
+    if not full_path.exists():
+        return f"未找到目录：{rel_request}"
+    if not full_path.is_dir():
+        return f"删除目录失败：目标不是目录：{rel_request}"
+
+    try:
+        # 非递归：目录必须为空
+        if not recursive:
+            if any(full_path.iterdir()):
+                return f"删除目录失败：目录非空（如需强制删除请设置 recursive=true）：{rel_request}"
+            full_path.rmdir()
+            return f"已删除目录：{rel_request}"
+
+        shutil.rmtree(full_path)
+        return f"已递归删除目录：{rel_request}"
+    except Exception as e:
+        return f"删除目录失败：{rel_request}，错误：{e}"

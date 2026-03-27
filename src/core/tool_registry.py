@@ -1,7 +1,7 @@
 from typing import Any, Dict
 
 from src.tools.llm_tools import llm_generate
-from src.tools.file_tools import delete_file, delete_files, read_file, write_file
+from src.tools.file_tools import delete_directory, delete_file, delete_files, read_file, write_file
 from src.tools.search_docs import search_docs
 
 from src.services.llm_env_service import get_llm_env_summary
@@ -59,6 +59,14 @@ def build_tool_registry(ctx: AppContext) -> Dict[str, Dict[str, Any]]:
             "description": (
                 "删除多个文件（相对项目根目录）。默认仅允许删除 data/ 下的文件。"
                 "输入：文件路径列表（可多行/用逗号或分号分隔），例如：data/角色设定/林夕.md\\ndata/角色设定/木子夕.md"
+            ),
+        },
+        "DeleteDirectory": {
+            "func": lambda payload: delete_directory(str(payload)),
+            "description": (
+                "删除目录（相对项目根目录）。默认仅允许删除 data/ 下的目录。"
+                "默认不递归：目录非空会失败。"
+                "输入示例：data/背景设定/临时 或 path=data/背景设定/临时 recursive=true"
             ),
         },
         "SearchDocs": {

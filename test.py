@@ -4,6 +4,7 @@ import types
 from collections.abc import Iterator
 
 import certifi
+from pathlib import Path
 from langchain_core.documents import Document
 from dotenv import load_dotenv
 
@@ -23,9 +24,16 @@ try:
 except Exception:
     pass
 
-os.environ.setdefault("SSL_CERT_FILE", certifi.where())
-os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
-os.environ.setdefault("CURL_CA_BUNDLE", certifi.where())
+# 如果外部环境（或 .env）里设置了 SSL_CERT_FILE 但路径无效，会导致 httpx 直接崩溃；
+# 这里做一次自检，保证它永远指向一个存在的 CA 文件，或交给 truststore 走系统证书。
+_env_ssl_cert_file = os.getenv("SSL_CERT_FILE")
+if _env_ssl_cert_file and not Path(_env_ssl_cert_file).exists():
+    os.environ.pop("SSL_CERT_FILE", None)
+
+_certifi_ca = certifi.where()
+os.environ.setdefault("SSL_CERT_FILE", _certifi_ca)
+os.environ.setdefault("REQUESTS_CA_BUNDLE", _certifi_ca)
+os.environ.setdefault("CURL_CA_BUNDLE", _certifi_ca)
 
 from modelscope_agent.agents.role_play import RolePlay
 

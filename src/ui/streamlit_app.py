@@ -6,10 +6,13 @@ import os
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
+import httpx
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_ROOT = PROJECT_ROOT / "config"
 PREFERENCES_PATH = CONFIG_ROOT / "preferences.md"
+DATA_ROOT = PROJECT_ROOT / "data"
 
 from src.core.agent import (
     diagnose_skills,
@@ -31,28 +34,114 @@ def _init_session() -> None:
         st.session_state.dev_mode_choice = False
     if "prefs_write_enabled" not in st.session_state:
         st.session_state.prefs_write_enabled = True
+    if "chat_scroll_nonce" not in st.session_state:
+        st.session_state.chat_scroll_nonce = 0
+
+
+def _inject_chat_ui_css() -> None:
+    """
+    让提问框贴底，避免长对话时需要反复滚动找输入框。
+    注意：Streamlit 的 DOM 结构可能随版本变化；这里用 data-testid 做尽量稳的选择器。
+    """
+    st.markdown(
+        """
+<style>
+/* 给页面底部留出空间，避免固定输入框遮挡内容 */
+section.main > div.block-container {
+  padding-bottom: 7.5rem;
+}
+
+/* 让 chat_input 与主内容区同宽（自动避开侧栏） */
+div[data-testid="stChatInput"] {
+  position: sticky;
+  bottom: 0;
+  z-index: 999;
+  width: 100%;
+  padding: 0.75rem 0 1rem 0;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid rgba(49, 51, 63, 0.14);
+}
+
+/* 深色模式背景适配 */
+@media (prefers-color-scheme: dark) {
+  div[data-testid="stChatInput"] {
+    background: rgba(14, 17, 23, 0.92);
+    border-top: 1px solid rgba(250, 250, 250, 0.12);
+  }
+}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _auto_scroll_to_chat_bottom() -> None:
+    """
+    在 Streamlit rerun 后，把视口滚到最新消息。
+    通过 nonce 触发组件更新，避免被缓存。
+    """
+    nonce = int(st.session_state.chat_scroll_nonce)
+    components.html(
+        f"""
+<div id="chat-bottom-anchor"></div>
+<script>
+  (function() {{
+    const nonce = {nonce};
+    // 给布局一点时间渲染再滚动
+    setTimeout(() => {{
+      const el = document.getElementById("chat-bottom-anchor");
+      if (el && el.scrollIntoView) {{
+        el.scrollIntoView({{behavior: "smooth", block: "end"}});
+      }} else {{
+        window.scrollTo(0, document.body.scrollHeight);
+      }}
+    }}, 60);
+  }})();
+</script>
+        """,
+        height=0,
+        width=0,
+    )
 
 
 def _render_chat(max_steps: int, history_turns: int) -> None:
     st.subheader("对话")
+    _inject_chat_ui_css()
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
+    # anchor：用于自动滚动到最新消息（必须在 messages 之后）
+    st.markdown('<div id="chat-bottom-anchor"></div>', unsafe_allow_html=True)
+    _auto_scroll_to_chat_bottom()
+
     if prompt := st.chat_input("输入需求，Agent 会选择工具或技能…"):
         st.session_state.messages.append({"role": "user", "content": prompt})
+        st.session_state.chat_scroll_nonce += 1
         with st.chat_message("user"):
             st.markdown(prompt)
         with st.chat_message("assistant"):
             with st.spinner("Agent 运行中…"):
-                response = run_agent(
-                    prompt,
-                    max_steps=max_steps,
-                    conversation_history=st.session_state.messages[:-1],
-                    history_turns=history_turns,
-                )
+                try:
+                    response = run_agent(
+                        prompt,
+                        max_steps=max_steps,
+                        conversation_history=st.session_state.messages[:-1],
+                        history_turns=history_turns,
+                    )
+                except httpx.TimeoutException:
+                    response = (
+                        "LLM 请求超时（ReadTimeout）。\n\n"
+                        "建议：\n"
+                        "- 稍后重试（网络/代理波动时常见）\n"
+                        "- 或在 `.env` 中调大超时，例如设置 `LLM_TIMEOUT_READ=240`"
+                    )
             st.markdown(response)
             st.session_state.messages.append({"role": "assistant", "content": response})
+            st.session_state.chat_scroll_nonce += 1
+        # 触发 rerun，让固定输入框与滚动同步到最新位置
+        st.rerun()
 
 
 def _collect_markdown_files(limit: int = 80) -> list[Path]:
@@ -74,18 +163,128 @@ def _rel_project(path: Path) -> str:
         return str(path)
 
 
+def _norm_rel_posix(p: str) -> str:
+    return (p or "").replace("\\", "/").strip()
+
+
+def _data_rel(path: Path) -> str:
+    try:
+        return path.relative_to(DATA_ROOT).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _render_data_breadcrumb(rel_dir: str) -> str:
+    rel_dir = _norm_rel_posix(rel_dir).strip("/")
+    parts = [p for p in rel_dir.split("/") if p]
+    crumb_labels = ["data"] + parts
+    crumb_paths = [""]  # "" 表示 data/
+    acc = ""
+    for part in parts:
+        acc = f"{acc}/{part}" if acc else part
+        crumb_paths.append(acc)
+
+    cols = st.columns(len(crumb_labels))
+    chosen: str | None = None
+    for i, (label, pth) in enumerate(zip(crumb_labels, crumb_paths)):
+        with cols[i]:
+            if st.button(label, key=f"data_crumb_{i}_{pth}", use_container_width=True):
+                chosen = pth
+    return chosen if chosen is not None else rel_dir
+
+
+def _list_data_dir(rel_dir: str) -> tuple[list[str], list[str]]:
+    """
+    返回 (subdirs, md_files)：
+    - subdirs: 目录名（不含路径）
+    - md_files: 相对 data/ 的路径（posix）
+    """
+    rel_dir = _norm_rel_posix(rel_dir).strip("/")
+    dir_path = (DATA_ROOT / rel_dir) if rel_dir else DATA_ROOT
+    if not dir_path.exists() or not dir_path.is_dir():
+        return ([], [])
+
+    subdirs: list[str] = []
+    md_files: list[str] = []
+    for p in sorted(dir_path.iterdir(), key=lambda x: (not x.is_dir(), x.name)):
+        if p.is_dir():
+            subdirs.append(p.name)
+        elif p.is_file() and p.suffix.lower() == ".md":
+            md_files.append(_data_rel(p))
+    return (subdirs, md_files)
+
+
 def _render_data_tab() -> None:
     st.subheader("资料库")
-    st.caption("浏览项目 `data/` 下的 Markdown，只读预览。")
-    files = _collect_markdown_files()
-    if not files:
-        st.info("未找到 `data/**/*.md`。可在项目根下创建 `data/角色设定/` 等目录。")
+    st.caption("按目录分层检索 `data/` 下的 Markdown（只读预览）。")
+
+    if not DATA_ROOT.exists():
+        st.info("未找到 `data/` 目录。可在项目根下创建 `data/角色设定/`、`data/背景设定/` 等目录。")
         return
-    labels = [_rel_project(f) for f in files]
-    choice = st.selectbox("选择文件", range(len(labels)), format_func=lambda i: labels[i])
-    rel = labels[choice]
-    content = read_file(rel)
-    st.text_area("内容预览", value=content, height=420, disabled=True)
+
+    if "data_browser_dir" not in st.session_state:
+        st.session_state.data_browser_dir = ""
+    if "data_browser_selected" not in st.session_state:
+        st.session_state.data_browser_selected = ""
+
+    rel_dir = _norm_rel_posix(st.session_state.data_browser_dir)
+
+    col_left, col_right = st.columns([0.42, 0.58], vertical_alignment="top")
+    with col_left:
+        st.markdown("##### 目录导航")
+        rel_dir = _render_data_breadcrumb(rel_dir)
+        st.session_state.data_browser_dir = rel_dir
+
+        query = st.text_input("过滤（目录/文件名）", value="", placeholder="例如：背景设定 / 关键地点 / 岚")
+        query_norm = query.strip().lower()
+
+        subdirs, md_files = _list_data_dir(rel_dir)
+        if query_norm:
+            subdirs = [d for d in subdirs if query_norm in d.lower()]
+            md_files = [f for f in md_files if query_norm in f.lower()]
+
+        if rel_dir:
+            parent = "/".join([p for p in rel_dir.split("/") if p][:-1])
+            if st.button("返回上级", use_container_width=True):
+                st.session_state.data_browser_dir = parent
+                st.session_state.data_browser_selected = ""
+                st.rerun()
+
+        if subdirs:
+            with st.expander("子目录", expanded=True):
+                for d in subdirs:
+                    if st.button(d, key=f"data_dir_{rel_dir}_{d}", use_container_width=True):
+                        st.session_state.data_browser_dir = f"{rel_dir}/{d}".strip("/")
+                        st.session_state.data_browser_selected = ""
+                        st.rerun()
+        else:
+            st.caption("当前目录无子目录。")
+
+        st.markdown("##### 文件")
+        if not md_files:
+            st.info("当前目录未找到 Markdown 文件。")
+        else:
+            labels = [f.split("/")[-1] if "/" in f else f for f in md_files]
+            default_idx = 0
+            if st.session_state.data_browser_selected in md_files:
+                default_idx = md_files.index(st.session_state.data_browser_selected)
+            selected = st.selectbox(
+                "选择文件",
+                options=md_files,
+                index=default_idx,
+                format_func=lambda p: labels[md_files.index(p)],
+            )
+            st.session_state.data_browser_selected = selected
+
+    with col_right:
+        st.markdown("##### 内容预览")
+        selected = _norm_rel_posix(st.session_state.data_browser_selected)
+        if not selected:
+            st.info("在左侧选择一个文件进行预览。")
+            return
+        rel = f"data/{selected}".replace("//", "/")
+        content = read_file(rel)
+        st.text_area("内容", value=content, height=520, disabled=True)
 
 
 def _render_skills_tab() -> None:
