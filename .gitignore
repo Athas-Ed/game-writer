@@ -13,6 +13,10 @@ __pycache__/
 logs/
 tmp/
 
+# Personal creative outputs (keep folder only)
+data/**
+!data/.gitkeep
+
 # Streamlit cache (if any)
 .streamlit/
 
