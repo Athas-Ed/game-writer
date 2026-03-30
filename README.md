@@ -117,8 +117,8 @@ docker compose down
 **推荐：GitHub Container Registry（GHCR）+ GitHub Actions 自动发布**（本仓库已提供工作流：`.github/workflows/docker-ghcr.yml`）。
 
 - **发布方式（你自己做）**：
-  - 推送到 `master`：自动发布 `ghcr.io/<owner>/<repo>:latest`
-  - 打 tag（例如 `v0.1.0`）并 push：自动发布 `ghcr.io/<owner>/<repo>:v0.1.0`
+  - 推送到 `master`：自动发布 `ghcr.io/athas-ed/personal-agent:latest`
+  - 打 tag（例如 `v0.1.0`）并 push：自动发布 `ghcr.io/athas-ed/personal-agent:v0.1.0`
 
 ```bat
 git tag v0.1.0
@@ -131,7 +131,16 @@ git push origin v0.1.0
 docker run --rm -p 8501:8501 ^
   -v "%CD%\data:/app/data" ^
   --env-file .env ^
-  ghcr.io/<owner>/<repo>:v0.1.0
+  ghcr.io/athas-ed/personal-agent:v0.1.0
+```
+
+也可以直接跑最新版（不固定版本）：
+
+```bat
+docker run --rm -p 8501:8501 ^
+  -v "%CD%\data:/app/data" ^
+  --env-file .env ^
+  ghcr.io/athas-ed/personal-agent:latest
 ```
 
 建议在 README 里写死一个“面试官一键命令”，并在发布时同步 tag（例如 `v0.1.0`、`latest`）。
