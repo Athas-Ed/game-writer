@@ -26,3 +26,6 @@ data/**
 # Local vector index / embeddings / large assets
 .vector_index/
 models/
+
+# Personal study notes (do not commit)
+个人学习/
