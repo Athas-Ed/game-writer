@@ -11,7 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from generate_outlines import generate_outlines
-from read_settings import read_all_settings
+from read_settings import read_settings_for_outline
 
 
 def run(input_text: str) -> str:
@@ -22,7 +22,7 @@ def run(input_text: str) -> str:
     if not user_request:
         return "outline-writer 输入为空，请提供一句话剧情描述。"
 
-    context = read_all_settings()
+    context = read_settings_for_outline(user_request)
     outlines = generate_outlines(user_request, context, num_options=3)
     if not outlines:
         return "outline-writer 执行完成，但未生成任何大纲。"

@@ -22,3 +22,7 @@ data/**
 
 # Packaging artifacts
 *.egg-info/
+
+# Local vector index / embeddings / large assets
+.vector_index/
+models/

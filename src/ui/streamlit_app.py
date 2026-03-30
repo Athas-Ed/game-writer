@@ -21,7 +21,7 @@ from src.core.agent import (
     run_agent,
 )
 from src.tools.file_tools import read_file
-
+from src.ui.scheme_options import assistant_message_dict, message_scheme_options
 
 def _app_mode_from_env() -> str:
     return os.getenv("APP_MODE", "").strip().lower()
@@ -34,8 +34,35 @@ def _init_session() -> None:
         st.session_state.dev_mode_choice = False
     if "prefs_write_enabled" not in st.session_state:
         st.session_state.prefs_write_enabled = True
+    if "rag_enabled" not in st.session_state:
+        st.session_state.rag_enabled = False
     if "chat_scroll_nonce" not in st.session_state:
         st.session_state.chat_scroll_nonce = 0
+    if "_pending_agent_prompt" not in st.session_state:
+        st.session_state._pending_agent_prompt = None
+
+
+def _run_agent_safe(
+    prompt: str,
+    *,
+    max_steps: int,
+    history_turns: int,
+    conversation_history: list,
+) -> str:
+    try:
+        return run_agent(
+            prompt,
+            max_steps=max_steps,
+            conversation_history=conversation_history,
+            history_turns=history_turns,
+        )
+    except httpx.TimeoutException:
+        return (
+            "LLM 请求超时（ReadTimeout）。\n\n"
+            "建议：\n"
+            "- 稍后重试（网络/代理波动时常见）\n"
+            "- 或在 `.env` 中调大超时，例如设置 `LLM_TIMEOUT_READ=240`"
+        )
 
 
 def _inject_chat_ui_css() -> None:
@@ -69,6 +96,15 @@ div[data-testid="stChatInput"] {
     background: rgba(14, 17, 23, 0.92);
     border-top: 1px solid rgba(250, 250, 250, 0.12);
   }
+}
+
+/* 方案选择按钮行：与气泡对齐、略紧凑 */
+div.scheme-choice-row {
+  margin-top: 0.35rem;
+  margin-bottom: 0.25rem;
+}
+div.scheme-choice-row button {
+  font-size: 0.9rem;
 }
 </style>
         """,
@@ -108,9 +144,53 @@ def _auto_scroll_to_chat_bottom() -> None:
 def _render_chat(max_steps: int, history_turns: int) -> None:
     st.subheader("对话")
     _inject_chat_ui_css()
-    for msg in st.session_state.messages:
+
+    pending = st.session_state.get("_pending_agent_prompt")
+    if pending is not None and str(pending).strip():
+        prompt = str(pending).strip()
+        st.session_state._pending_agent_prompt = None
+        hist = st.session_state.messages[:-1] if st.session_state.messages else []
+        with st.spinner("Agent 运行中…"):
+            response = _run_agent_safe(
+                prompt,
+                max_steps=max_steps,
+                history_turns=history_turns,
+                conversation_history=hist,
+            )
+        st.session_state.messages.append(assistant_message_dict(response))
+        st.session_state.chat_scroll_nonce += 1
+        st.rerun()
+
+    n = len(st.session_state.messages)
+    last_idx = n - 1
+    for idx, msg in enumerate(st.session_state.messages):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+            if msg["role"] == "assistant" and idx == last_idx:
+                opts = message_scheme_options(msg)
+                if opts:
+                    st.caption("点击选择方案（等同发送一条用户消息）：")
+                    st.markdown('<div class="scheme-choice-row">', unsafe_allow_html=True)
+                    cols = st.columns(len(opts))
+                    for cj, opt in enumerate(opts):
+                        with cols[cj]:
+                            label = opt["label"]
+                            help_txt = opt.get("preview") or ""
+                            if st.button(
+                                label,
+                                key=f"scheme_pick_{idx}_{opt['id']}",
+                                use_container_width=True,
+                                help=help_txt[:300] if help_txt else None,
+                            ):
+                                choice = (
+                                    f"我选择{opt['label']}，请根据上一轮助手回复继续："
+                                    "展开该方案细节（或按上一轮说明保存/细化）。"
+                                )
+                                st.session_state.messages.append({"role": "user", "content": choice})
+                                st.session_state._pending_agent_prompt = choice
+                                st.session_state.chat_scroll_nonce += 1
+                                st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
 
     # anchor：用于自动滚动到最新消息（必须在 messages 之后）
     st.markdown('<div id="chat-bottom-anchor"></div>', unsafe_allow_html=True)
@@ -123,24 +203,15 @@ def _render_chat(max_steps: int, history_turns: int) -> None:
             st.markdown(prompt)
         with st.chat_message("assistant"):
             with st.spinner("Agent 运行中…"):
-                try:
-                    response = run_agent(
-                        prompt,
-                        max_steps=max_steps,
-                        conversation_history=st.session_state.messages[:-1],
-                        history_turns=history_turns,
-                    )
-                except httpx.TimeoutException:
-                    response = (
-                        "LLM 请求超时（ReadTimeout）。\n\n"
-                        "建议：\n"
-                        "- 稍后重试（网络/代理波动时常见）\n"
-                        "- 或在 `.env` 中调大超时，例如设置 `LLM_TIMEOUT_READ=240`"
-                    )
+                response = _run_agent_safe(
+                    prompt,
+                    max_steps=max_steps,
+                    history_turns=history_turns,
+                    conversation_history=st.session_state.messages[:-1],
+                )
             st.markdown(response)
-            st.session_state.messages.append({"role": "assistant", "content": response})
+            st.session_state.messages.append(assistant_message_dict(response))
             st.session_state.chat_scroll_nonce += 1
-        # 触发 rerun，让固定输入框与滚动同步到最新位置
         st.rerun()
 
 
@@ -296,6 +367,9 @@ def _render_skills_tab() -> None:
     for name, meta in sorted(catalog.items(), key=lambda x: x[0]):
         with st.expander(f"**{name}**", expanded=False):
             st.markdown(meta.get("description", "—"))
+            als = meta.get("aliases") or []
+            if isinstance(als, list) and als:
+                st.caption("中文别名（可直接用于 RunSkill 技能名）：" + "、".join(str(a) for a in als))
             st.caption(f"目录： `{meta.get('path', '')}`")
             st.caption("调用方式：`RunSkill`，例如 `" + f"`{name}|你的需求..." + "`")
 
@@ -323,6 +397,32 @@ def _render_dev_tab() -> None:
         help="默认开启。关闭后，Agent 仍可提出偏好建议，但不会实际写入到 config/preferences.md。",
     )
     os.environ["PREFERENCES_WRITE_ENABLED"] = "1" if st.session_state.prefs_write_enabled else "0"
+
+    st.markdown("##### RAG 增强模式")
+    st.session_state.rag_enabled = st.checkbox(
+        "启用 RAG 增强（向量检索 + 上下文增强）",
+        value=st.session_state.rag_enabled,
+        help=(
+            "默认关闭。关闭时 VectorSearch 会退回关键词证据检索（SearchDocs 的分块索引）；"
+            "开启后才使用 Chroma + embedding 的向量语义检索（失败仍会自动降级）。"
+        ),
+    )
+    os.environ["RAG_ENABLED"] = "1" if st.session_state.rag_enabled else "0"
+
+    # RAG 开启时，优先引导使用项目内离线本地模型，避免在线拉取失败（证书/代理环境常见）。
+    default_local_model = str(PROJECT_ROOT / "models" / "bge-small-zh-v1.5")
+    if st.session_state.rag_enabled:
+        os.environ.setdefault("VECTOR_EMBED_MODEL", default_local_model)
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
+    st.caption(
+        "当前 RAG 环境变量："
+        f" RAG_ENABLED={os.environ.get('RAG_ENABLED','0')}"
+        f" | VECTOR_EMBED_MODEL={os.environ.get('VECTOR_EMBED_MODEL','(unset)')}"
+        f" | HF_HUB_OFFLINE={os.environ.get('HF_HUB_OFFLINE','(unset)')}"
+        f" | TRANSFORMERS_OFFLINE={os.environ.get('TRANSFORMERS_OFFLINE','(unset)')}"
+    )
 
     st.markdown("##### 偏好文件预览 / 编辑")
     CONFIG_ROOT.mkdir(parents=True, exist_ok=True)
@@ -372,6 +472,8 @@ def main() -> None:
 
     # 让偏好写入开关在所有模式下生效（工作/开发模式都读取该变量）
     os.environ["PREFERENCES_WRITE_ENABLED"] = "1" if st.session_state.prefs_write_enabled else "0"
+    # RAG 默认关闭；仅开发工具面板打开时写入环境变量（但此处也保持一致，避免跨 rerun 丢失）
+    os.environ["RAG_ENABLED"] = "1" if st.session_state.rag_enabled else "0"
 
     app_mode = _app_mode_from_env()
 

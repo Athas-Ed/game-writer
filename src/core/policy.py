@@ -86,6 +86,8 @@ def build_json_only_prompt(
 - 需要写入文件时，必须先输出一个 action：`tool`=WriteFile，并等待工具返回的 Observation；不得在未看到 WriteFile 的 Observation 之前以 final 声称已写入。
 - 每一轮只能输出一个 JSON（要么 action 要么 final）。
 - 当任务属于某个技能的典型能力（如“生成剧情大纲”）时，优先使用 RunSkill；否则优先直接用基础工具（ReadFile/WriteFile/LLM）。
+- RunSkill 的 input 格式为「技能名|用户需求」：其中技能名可使用列表中的**规范 id**或括号内给出的**中文别名**（完全等价），例如 `大纲写手|一句话剧情` 与 `outline-writer|…` 相同。
+- **大纲写手（outline-writer）**：仅用于把用户给出的**完整故事构思**一次性生成多套（如 3 个）大纲方案。**禁止**在历史对话里已经展示过「方案1/2/3」且用户正在**选择编号、要求展开/细化/保存某一方案**时再次调用 `RunSkill` 的大纲写手；此类续写应直接输出 `{{"type":"final","output":"…"}}`（合法的单一 JSON 对象），依据历史消息中已给出的方案正文扩展（必要时可先调用 LLM 再 final；需要落盘再用 WriteFile）。
 - 当用户要求“修改具体字段/段落”（即不只是生成新文件）时，优先使用 SearchDocs 找到相关证据片段，再用 ReadFile 读取整文件并进行精确修改。
 - 当用户要求“删除文件/移除某些文件”时，优先调用 DeleteFiles（或 DeleteFile）完成删除。
 - 角色设定类内容默认写入到 data/角色设定/ 下；背景设定类内容默认写入到 data/背景设定/ 下。

@@ -3,6 +3,8 @@ from typing import Any, Dict
 from src.tools.llm_tools import llm_generate
 from src.tools.file_tools import delete_directory, delete_file, delete_files, read_file, write_file
 from src.tools.search_docs import search_docs
+from src.tools.settings_route import settings_route
+from src.tools.vector_tools import build_vector_index, vector_search
 
 from src.services.llm_env_service import get_llm_env_summary
 from src.services.output_path_service import normalize_write_path
@@ -11,7 +13,7 @@ from src.services.skills_service import diagnose_skills as diagnose_skills_impl,
 
 from src.core.app_context import AppContext
 
-def get_skills_catalog(ctx: AppContext) -> Dict[str, Dict[str, str]]:
+def get_skills_catalog(ctx: AppContext) -> Dict[str, Dict[str, Any]]:
     return dict(scan_skills(ctx.skills_root))
 
 
@@ -72,18 +74,44 @@ def build_tool_registry(ctx: AppContext) -> Dict[str, Dict[str, Any]]:
         "SearchDocs": {
             "func": lambda payload: search_docs(payload),
             "description": (
-                "在 data/**/*.md 中做字段/段落级证据检索（返回 top-k 片段，含文件路径/标题/片段内容）。"
-                "输入：query（例如“艾莉丝 年龄 18”或“艾莉丝 年龄”）。"
-                "可升级为向量+RAG，支持处理上万的md文件。"
+                "在 data/**/*.md 中做字段/段落级证据检索（返回 top-k 片段，含 chunk_ref/data_category/标题/片段）。"
+                "输入：query 字符串（例如“艾莉丝 年龄 18”）。"
+                "大范围浏览请先用 SettingsRoute list 或 files dir=…。"
+            ),
+        },
+        "VectorSearch": {
+            "func": lambda payload: vector_search(str(payload)),
+            "description": (
+                "向量语义检索：在 data/ Markdown 分块上做 embedding 相似度检索，返回 top-k 相关 chunk。"
+                "输出包含 chunk_ref、来源文件与正文片段。"
+                "输入：query 字符串（也可写成 query=...|top_k=8）。"
+                "下一步：用 ReadFile 读取对应文件，并按 chunk_ref 精确定位修改。"
+            ),
+        },
+        "BuildVectorIndex": {
+            "func": lambda payload: build_vector_index(str(payload)),
+            "description": (
+                "构建/重建向量索引（持久化到 .vector_index/），用于确保 VectorSearch 可用且索引最新。"
+                "输入可选：force=true/1（强制重建）。"
+                "输出会返回 collection 名与条目数 count。"
+            ),
+        },
+        "SettingsRoute": {
+            "func": lambda payload: settings_route(str(payload)),
+            "description": (
+                "设定库结构化路由：list 列索引；files dir=角色设定 列目录下全部 md；"
+                "chunks path=data/…/某.md 输出分块+元数据（chunk_ref）；search 关键词 同 SearchDocs。"
+                "输入示例单行：list | files dir=背景设定/种族 | chunks path=data/角色设定/林夕.md | search 林夕"
             ),
         },
         "LLM": {"func": lambda prompt: llm_generate(prompt), "description": "调用语言模型进行文本创作。输入：提示词"},
         "RunSkill": {
             "func": lambda payload: run_skill(ctx, payload),
             "description": (
-                "执行已加载技能。输入格式：技能名|用户需求。"
+                "执行已加载技能。输入格式：技能名|用户需求（技能名可用规范 id 或 SKILL.md 中的中文别名，见技能列表括号内）。"
                 "如用户需求需要换行，请在 JSON 字符串里用 \\n 表示。"
-                "例如：outline-writer|主角在废弃车站发现一封旧信。"
+                "例如：outline-writer|主角在废弃车站发现一封旧信。或：大纲写手|同左。"
+                "注意：用户已选「方案1/2/3」并要求展开细化时，不要再调用 outline-writer，应直接 final 续写。"
             ),
         },
         "ListPreferences": {

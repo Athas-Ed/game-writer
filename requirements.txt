@@ -1,6 +1,2 @@
-streamlit==1.55.0
-httpx==0.28.1
-python-dotenv==1.2.2
-certifi==2026.2.25
-
-
+# 依赖版本在 pyproject.toml 中锁定；此处仅触发可编辑安装并安装运行时依赖。
+-e .

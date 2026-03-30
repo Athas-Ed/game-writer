@@ -1,5 +1,6 @@
 ---
 name: version-control
+aliases: 版本管理, 设定版本, 备份回滚
 description: 管理 data/ 下所有设定文件（角色、背景、剧情等）的版本历史，支持自动备份、记录、回滚和按策略清理旧版本。
 ---
 

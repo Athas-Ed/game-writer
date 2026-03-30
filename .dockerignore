@@ -1,0 +1,20 @@
+.git
+.github
+venv
+venv_skills
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.idea
+.streamlit
+logs
+tmp
+*.egg-info
+.env
+
+# Large/local assets (keep out of build context)
+models
+.vector_index
+data

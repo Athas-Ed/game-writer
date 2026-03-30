@@ -10,7 +10,11 @@ from src.core.tool_registry import (
     get_skills_catalog,
     normalize_write_path_for_tool,
 )
+from src.services.skills_service import resolve_skill_key
 from src.tools.llm_tools import llm_generate
+
+# DEBUG 下打印上下文时的分块大小（单块过大易淹没控制台，故长 prompt 采用 头+尾）
+_DEBUG_PROMPT_CHUNK = 4000
 
 
 def _parse_llm_decision(response: str) -> Dict[str, Any]:
@@ -81,9 +85,17 @@ def run_agent_engine(
     skills = get_skills_catalog(ctx)
 
     tool_descriptions = "\n".join(f"- {name}: {info['description']}" for name, info in tools.items())
-    skill_descriptions = (
-        "\n".join(f"- {meta['name']}: {meta['description']}" for meta in skills.values()) if skills else "- 无可用技能"
-    )
+    if skills:
+        skill_lines: List[str] = []
+        for meta in sorted(skills.values(), key=lambda x: str(x.get("name", ""))):
+            desc = str(meta.get("description", ""))
+            als = meta.get("aliases") or []
+            if isinstance(als, list) and als:
+                desc = f"{desc}（中文别名：{'、'.join(str(a) for a in als)}）"
+            skill_lines.append(f"- {meta.get('name', '')}: {desc}")
+        skill_descriptions = "\n".join(skill_lines)
+    else:
+        skill_descriptions = "- 无可用技能"
     history_text = _format_conversation_history(conversation_history, history_turns)
     preferences_text = get_preferences_text(ctx)
 
@@ -101,6 +113,19 @@ def run_agent_engine(
     last_action_signature: Optional[Tuple[str, str]] = None
 
     for step in range(max_steps):
+        if flags.is_debug:
+            plen = len(current_prompt)
+            print(f"\n[DEBUG] === Step {step + 1} — 发给模型的上下文长度: {plen} 字符 ===")
+            if plen <= _DEBUG_PROMPT_CHUNK * 2:
+                print(f"[DEBUG] Full prompt:\n{current_prompt}")
+            else:
+                omit = plen - 2 * _DEBUG_PROMPT_CHUNK
+                print(
+                    f"[DEBUG] Prompt head ({_DEBUG_PROMPT_CHUNK} chars):\n{current_prompt[:_DEBUG_PROMPT_CHUNK]}\n"
+                    f"... [已省略中间 {omit} 字符] ...\n"
+                    f"[DEBUG] Prompt tail ({_DEBUG_PROMPT_CHUNK} chars):\n{current_prompt[-_DEBUG_PROMPT_CHUNK:]}"
+                )
+
         response = llm_generate(current_prompt)
         if flags.is_info:
             print(f"\n--- Step {step + 1} ---")
@@ -109,6 +134,13 @@ def run_agent_engine(
             print("-" * 40)
 
         decision = _parse_llm_decision(response)
+        if flags.is_debug:
+            try:
+                dbg_decision = json.dumps(decision, ensure_ascii=False)
+            except (TypeError, ValueError):
+                dbg_decision = str(decision)
+            print(f"[DEBUG] Parsed decision: {dbg_decision}")
+
         if decision.get("type") == "action":
             tool_name = decision.get("tool")
             tool_input = decision.get("input", "")
@@ -124,7 +156,11 @@ def run_agent_engine(
                 )
 
             if flags.is_info:
-                print(f"Action match: {tool_name}, Input (truncated): {str(tool_input)[:120]}...")
+                tin = str(tool_input)
+                if flags.is_debug:
+                    print(f"[DEBUG] Action: tool={tool_name!r}, input (full, {len(tin)} chars):\n{tin}")
+                else:
+                    print(f"Action match: {tool_name}, Input (truncated): {tin[:120]}{'...' if len(tin) > 120 else ''}")
 
             action_signature = (tool_name, str(tool_input))
             if action_signature == last_action_signature:
@@ -157,11 +193,37 @@ def run_agent_engine(
                 # 避免 LLM 二次转述时只保留标题导致用户无法辨别。
                 if tool_name == "RunSkill":
                     payload = str(tool_input)
-                    if payload.strip().startswith("outline-writer|") and "方案1" in str(result) and "方案2" in str(result):
+                    head = payload.split("|", 1)[0].strip() if "|" in payload else ""
+                    canon_skill = resolve_skill_key(head, skills) if head else None
+                    if canon_skill == "outline-writer" and "方案1" in str(result) and "方案2" in str(result):
+                        if flags.is_info:
+                            if flags.is_debug:
+                                print(f"[DEBUG] Observation (outline-writer short-circuit, full):\n{result}")
+                            else:
+                                r = str(result)
+                                print(
+                                    f"Observation (short-circuit): {r[:800]}{'…' if len(r) > 800 else ''} "
+                                    f"（全文 {len(r)} 字符；设 AGENT_LOG_LEVEL=DEBUG 可打印全文）"
+                                )
                         return f"{result}\n\n请回复你选择的方案编号（1/2/3），我会把该方案整理成完整 Markdown 并按你指定的文件名保存。"
+                    if canon_skill == "dialogue-voice" and "方案1" in str(result) and "方案2" in str(result):
+                        if flags.is_info:
+                            if flags.is_debug:
+                                print(f"[DEBUG] Observation (dialogue-voice short-circuit, full):\n{result}")
+                            else:
+                                r = str(result)
+                                print(
+                                    f"Observation (short-circuit): {r[:800]}{'…' if len(r) > 800 else ''} "
+                                    f"（全文 {len(r)} 字符；DEBUG 可打印全文）"
+                                )
+                        return f"{result}\n\n请回复你选择的方案编号（1/2），我会按该组对白继续润色、扩展或按你指定方式保存。"
 
                 if flags.is_info:
-                    print(f"Observation: {result}")
+                    if flags.is_debug:
+                        print(f"[DEBUG] Observation (full):\n{result}")
+                    else:
+                        r = str(result)
+                        print(f"Observation: {r[:800]}{'…' if len(r) > 800 else ''} （全文 {len(r)} 字符）")
                 current_prompt += f"\n{response}\nObservation: {result}\n"
 
                 if repeated_action_count >= 2:

@@ -38,7 +38,7 @@ if ($LASTEXITCODE -ne 0) {
 & $pyexe -c "import streamlit" 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
   Write-Host "[ERROR] streamlit is not installed."
-  Write-Host ("Run: {0} -m pip install -r requirements.txt" -f $pyexe)
+  Write-Host ("Run: {0} -m pip install -e ." -f $pyexe)
   exit 1
 }
 

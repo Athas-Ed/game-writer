@@ -1,5 +1,6 @@
 ---
 name: setting-splitter
+aliases: 设定拆分, 拆分设定, 拆分器
 description: 读取长文本设定集（txt/md），按规则识别条目类型并拆分为目录化的Markdown设定文件。
 ---
 

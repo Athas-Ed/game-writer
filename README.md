@@ -11,29 +11,37 @@
 
 ## 依赖安装
 
-1. 准备 Python（推荐 3.10+）
+**版本锁定以 `pyproject.toml` 为准**（`requirements.txt` / `requirements-dev.txt` 仅一行可编辑安装，避免与 `pyproject.toml` 重复维护）。
+
+1. 准备 Python（推荐 3.10+；Docker 镜像使用 3.11）
 2. 创建虚拟环境：
 
    ```bat
    python -m venv venv
    ```
 
-3. 安装运行依赖（运行必需）：
-
-   ```bat
-   venv\Scripts\python -m pip install -r requirements.txt
-   ```
-
-4. 安装项目（可选但推荐，便于 `import src...` 之类的包导入）：
+3. 安装项目与运行时依赖（二选一，等价）：
 
    ```bat
    venv\Scripts\python -m pip install -e .
    ```
 
-5. 开发/测试依赖（可选）：
+   或：
+
+   ```bat
+   venv\Scripts\python -m pip install -r requirements.txt
+   ```
+
+4. 开发/测试依赖（可选）：
 
    ```bat
    venv\Scripts\python -m pip install -r requirements-dev.txt
+   ```
+
+   等价于：
+
+   ```bat
+   venv\Scripts\python -m pip install -e ".[dev]"
    ```
 
 ## 配置环境变量（.env）
@@ -69,6 +77,64 @@ run.bat
 ```
 
 启动后浏览器打开：`http://localhost:8501`
+
+### Docker（可选）
+
+在项目根目录构建并运行（需自行准备 `.env`，勿提交到仓库）：
+
+```bat
+docker build -t personal-agent .
+docker run --rm -p 8501:8501 ^
+  -v "%CD%\data:/app/data" ^
+  --env-file .env ^
+  personal-agent
+```
+
+说明：
+
+- 将本地 `data/` 挂载到容器内 `/app/data`，便于读写资料。
+- API 密钥等通过 `--env-file .env` 或 `-e KEY=val` 传入。
+- 若修改了 `skills/` 或 `config/`，可重新 `docker build`，或额外挂载 `-v "%CD%\skills:/app/skills"` 等目录做开发调试。
+
+#### Docker Compose（更稳：只挂载 `data/`）
+
+一条命令启动（需自行准备 `.env`）：
+
+```bat
+docker compose up --build
+```
+
+停止并清理容器：
+
+```bat
+docker compose down
+```
+
+#### 预构建镜像（面试官拉取即跑）
+
+你可以把镜像发布到镜像仓库，让面试官无需源码就能跑。
+
+**推荐：GitHub Container Registry（GHCR）+ GitHub Actions 自动发布**（本仓库已提供工作流：`.github/workflows/docker-ghcr.yml`）。
+
+- **发布方式（你自己做）**：
+  - 推送到 `master`：自动发布 `ghcr.io/<owner>/<repo>:latest`
+  - 打 tag（例如 `v0.1.0`）并 push：自动发布 `ghcr.io/<owner>/<repo>:v0.1.0`
+
+```bat
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+- **运行命令（面试官侧）**：
+
+```bat
+docker run --rm -p 8501:8501 ^
+  -v "%CD%\data:/app/data" ^
+  --env-file .env ^
+  ghcr.io/<owner>/<repo>:v0.1.0
+```
+
+建议在 README 里写死一个“面试官一键命令”，并在发布时同步 tag（例如 `v0.1.0`、`latest`）。
 
 ### 手动启动（等价）
 

@@ -7,10 +7,12 @@ from pathlib import Path
 import sys
 from typing import Any, Dict, List, Optional
 
+SkillMeta = Dict[str, Any]
+
 
 @dataclass
 class SkillsState:
-    loaded: Dict[str, Dict[str, str]]
+    loaded: Dict[str, SkillMeta]
 
 
 def _safe_read_text(path: Path) -> str:
@@ -42,8 +44,88 @@ def _load_module(module_name: str, file_path: Path):
     return module
 
 
-def scan_skills(skills_root: Path) -> Dict[str, Dict[str, str]]:
-    skills: Dict[str, Dict[str, str]] = {}
+def _parse_aliases_line(text: str) -> List[str]:
+    """
+    解析 frontmatter 中的 aliases / 别名 行，支持逗号、顿号、分号等分隔。
+    """
+    m = re.search(r"^(?:aliases|别名)\s*[:：]\s*(.+)$", text, re.MULTILINE | re.IGNORECASE)
+    if not m:
+        return []
+    raw = m.group(1).strip()
+    if not raw or raw.lower() in {"[]", "null", "~", "none"}:
+        return []
+    parts = re.split(r"[,，、;；|｜/]+", raw)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def build_alias_map(catalog: Dict[str, SkillMeta]) -> Dict[str, str]:
+    """别名（含小写英文）→ 规范技能 id。先注册的别名优先，重复别名忽略后续。"""
+    out: Dict[str, str] = {}
+    for canonical, meta in catalog.items():
+        if canonical not in out:
+            out[canonical] = canonical
+        cl = canonical.lower()
+        if cl not in out:
+            out[cl] = canonical
+        for a in meta.get("aliases") or []:
+            if not isinstance(a, str):
+                continue
+            key = a.strip()
+            if not key:
+                continue
+            if key not in out:
+                out[key] = canonical
+            kl = key.lower()
+            # 仅当别名全为 ASCII 时小写键才有意义，避免误伤中文
+            if kl != key and kl not in out:
+                out[kl] = canonical
+    return out
+
+
+def outline_writer_request_is_selection_followup(user_request: str) -> bool:
+    """
+    判断是否为「已生成多套大纲之后」的选型/展开请求。
+    此类输入不应再作为 outline-writer 的「一句话剧情」执行，否则会生成无关新大纲。
+    """
+    u = (user_request or "").strip()
+    if not u or len(u) > 1600:
+        return False
+    # 与 Streamlit「方案选择」按钮文案一致
+    if re.search(r"根据上一轮助手回复继续", u):
+        return True
+    if re.search(r"(我选择|我要|就选|采用|选定|选).{0,24}方案\s*[123一二三四五六七八九十]", u):
+        return True
+    if re.search(r"(展开|细化|扩充|续写).{0,16}该方案", u):
+        return True
+    if re.search(r"(展开|细化).{0,12}方案\s*[123一二三四五六七八九十]", u):
+        return True
+    return False
+
+
+def resolve_skill_key(raw_name: str, catalog: Dict[str, SkillMeta]) -> Optional[str]:
+    """
+    将用户或模型输入的技能名（含中文别名、大小写变体）解析为 catalog 中的规范 name。
+    找不到则返回 None。
+    """
+    r = (raw_name or "").strip()
+    if not r:
+        return None
+    if r in catalog:
+        return r
+    rl = r.lower()
+    for k in catalog:
+        if k.lower() == rl:
+            return k
+    amap = build_alias_map(catalog)
+    if r in amap:
+        return amap[r]
+    if rl in amap:
+        return amap[rl]
+    return None
+
+
+def scan_skills(skills_root: Path) -> Dict[str, SkillMeta]:
+    skills: Dict[str, SkillMeta] = {}
     if not skills_root.exists():
         return skills
     for skill_md in skills_root.glob("*/SKILL.md"):
@@ -58,11 +140,13 @@ def scan_skills(skills_root: Path) -> Dict[str, Dict[str, str]]:
             if desc_match
             else f"{skill_name}（来自 {skill_md.as_posix()}）"
         )
+        alias_list = _parse_aliases_line(text)
         skills[skill_name] = {
             "name": skill_name,
             "description": skill_desc,
             "path": str(skill_md.parent),
             "runner": "scripts/run.py",
+            "aliases": alias_list,
         }
     return skills
 
@@ -77,8 +161,11 @@ def diagnose_skills(project_root: Path, skills_root: Path) -> List[Dict[str, Any
             runner_display = str(runner_file.relative_to(project_root))
         except ValueError:
             runner_display = str(runner_file)
+        als = meta.get("aliases") or []
+        aliases_display = "、".join(str(a) for a in als) if isinstance(als, list) else ""
         row: Dict[str, Any] = {
             "name": name,
+            "aliases": aliases_display,
             "runner": runner_display,
             "runner_exists": runner_file.exists(),
             "run_callable": False,
@@ -94,6 +181,16 @@ def diagnose_skills(project_root: Path, skills_root: Path) -> List[Dict[str, Any
             row["load_error"] = str(e)
         rows.append(row)
     return rows
+
+
+def _skill_listing_with_aliases(catalog: Dict[str, SkillMeta]) -> str:
+    lines = ["可用技能（规范 id，含中文别名）："]
+    for k in sorted(catalog.keys()):
+        meta = catalog[k]
+        als = meta.get("aliases") or []
+        extra = f"；别名：{'、'.join(als)}" if als else ""
+        lines.append(f"- {k}{extra}")
+    return "\n".join(lines)
 
 
 def ensure_loaded(state: SkillsState, skills_root: Path) -> SkillsState:
@@ -114,8 +211,19 @@ def run_skill(payload: str, state: SkillsState, skills_root: Path) -> str:
     if not skill_name or not user_request:
         return "RunSkill 输入无效：技能名和用户需求都不能为空。"
 
-    if skill_name not in state.loaded:
-        return f"未找到技能: {skill_name}。可用技能：{', '.join(sorted(state.loaded.keys())) or '无'}"
+    resolved = resolve_skill_key(skill_name, state.loaded)
+    if resolved is None:
+        hint = _skill_listing_with_aliases(state.loaded)
+        return f"未找到技能: {skill_name}。\n{hint}"
+    skill_name = resolved
+
+    if skill_name == "outline-writer" and outline_writer_request_is_selection_followup(user_request):
+        return (
+            "【请勿重复调用大纲写手技能】当前输入属于「已在上一轮生成多个大纲方案后，选定某一案并要求展开/细化/保存」。"
+            "大纲写手技能只接受「完整故事构思」以批量生成新方案，不能把「我选择方案几」当作新剧情。"
+            "请在本轮直接输出 type=final 的最终答复：根据历史对话中助手已给出的方案正文，撰写细化内容（章节结构、关键场景、伏笔回收等）；"
+            "需要写入仓库时再单独调用 WriteFile。"
+        )
 
     try:
         skill_dir = Path(state.loaded[skill_name]["path"])
