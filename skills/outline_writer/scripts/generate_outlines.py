@@ -6,11 +6,8 @@ from src.tools.llm_tools import llm_generate
 # 主格式：【方案N】 分段；不用 re.M，避免 $ 在每行末尾截断正文
 _OUTLINE_BLOCK_RE = re.compile(r"【方案([1-5])】\s*([\s\S]*?)(?=【方案[1-5]】|\Z)")
 
-# 回退：行首「数字 + .、． + 空格」且该行总长度足够，减少把短条目当成新大纲的概率
-_FALLBACK_ITEM_RE = re.compile(
-    r"^\s*([1-5])\s*[\.、．]\s+(.{40,})$",
-    re.MULTILINE,
-)
+# 回退：行首「数字 + .、． + 空格」列表式输出（不做长度门槛；仅用于 bracketed 格式解析失败时）。
+_FALLBACK_ITEM_RE = re.compile(r"^\s*([1-5])\s*[\.、．]\s+.+$", re.MULTILINE)
 
 
 def _parse_outlines_bracketed(response: str) -> list[str]:
@@ -39,7 +36,11 @@ def _parse_outlines_fallback(response: str, num_options: int) -> list[str]:
     starts: list[tuple[int, int]] = []
     for m in _FALLBACK_ITEM_RE.finditer(text):
         pos = m.start()
-        n = int(m.group(1))
+        # 取行首数字
+        mm = re.match(r"^\s*([1-5])", m.group(0))
+        if not mm:
+            continue
+        n = int(mm.group(1))
         if 1 <= n <= num_options:
             starts.append((pos, n))
     if not starts:
@@ -51,6 +52,9 @@ def _parse_outlines_fallback(response: str, num_options: int) -> list[str]:
         end = starts[i + 1][0] if i + 1 < len(starts) else len(text)
         chunk = text[pos:end].strip()
         if chunk:
+            # 极端情况下（编码损坏/截断）可能导致条目异常短，追加占位避免返回空块
+            if len(chunk) <= 50:
+                chunk = chunk + "\n（回退解析提示：该条目过短，原输出可能编码异常或被截断。）"
             outlines.append(chunk)
     return outlines
 
