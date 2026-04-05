@@ -1,8 +1,8 @@
 services:
-  personal-agent:
+  game-writer:
     build:
       context: .
-    image: personal-agent:local
+    image: game-writer:local
     ports:
       - "8501:8501"
     env_file:

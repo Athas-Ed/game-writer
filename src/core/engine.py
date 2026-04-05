@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -15,6 +16,88 @@ from src.tools.llm_tools import llm_generate
 
 # DEBUG 下打印上下文时的分块大小（单块过大易淹没控制台，故长 prompt 采用 头+尾）
 _DEBUG_PROMPT_CHUNK = 4000
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+# 0 表示不限制。用于抑制「用户长文 + 模型在多步里反复粘贴」导致的重复计费。
+_HISTORY_MSG_MAX_CHARS = _env_int("AGENT_HISTORY_MESSAGE_MAX_CHARS", 4000)
+_SCRATCHPAD_ACTION_INPUT_MAX_CHARS = _env_int("AGENT_SCRATCHPAD_ACTION_INPUT_MAX_CHARS", 2500)
+_OBSERVATION_MAX_CHARS = _env_int("AGENT_OBSERVATION_MAX_CHARS", 16000)
+
+
+def _truncate_history_message_content(content: str) -> str:
+    limit = _HISTORY_MSG_MAX_CHARS
+    if limit <= 0 or len(content) <= limit:
+        return content
+    # 为说明文字预留空间，避免 head 算得过大导致“未缩短”
+    reserve = 480
+    head = min(len(content) - 1, max(120, limit - reserve))
+    if head < 1:
+        head = min(80, len(content) - 1)
+    omitted = len(content) - head
+    notice = (
+        f"\n\n…[历史中的本段已缩短，省略约 {omitted} 字；请勿在后续 JSON 中重复粘贴该长文，"
+        f"应使用 ReadFile / SearchDocs / SettingsRoute 读取 data/ 下已保存的设定。]"
+    )
+    return content[:head] + notice
+
+
+def _compact_action_json_for_scratchpad(response: str) -> str:
+    """多步循环里会把每轮模型 JSON 追加进 prompt；压缩超长的 action.input，避免与用户长文叠加重复计费。"""
+    limit = _SCRATCHPAD_ACTION_INPUT_MAX_CHARS
+    if limit <= 0:
+        return response
+    text = (response or "").strip()
+    if "{" not in text or "}" not in text:
+        if len(text) > 12_000:
+            return text[:8000] + f"\n…[非 JSON 输出过长已截断，共 {len(text)} 字符]"
+        return response
+    start = text.find("{")
+    end = text.rfind("}")
+    try:
+        data = json.loads(text[start : end + 1])
+    except Exception:
+        if len(text) > 12_000:
+            return text[:8000] + f"\n…[JSON 解析失败且过长已截断，共 {len(text)} 字符]"
+        return response
+    if not isinstance(data, dict) or data.get("type") != "action":
+        return response
+    inp = data.get("input", "")
+    if not isinstance(inp, str) or len(inp) <= limit:
+        return response
+    tail_keep = min(400, limit // 4)
+    head_keep = limit - tail_keep
+    omitted = len(inp) - head_keep - tail_keep
+    data["input"] = (
+        inp[:head_keep]
+        + f"\n…[本回合 JSON 的 input 已压缩，中间省略约 {omitted} 字；请依据 Observation 与工具结果继续，勿再全文重贴用户设定。]"
+        + (inp[-tail_keep:] if tail_keep else "")
+    )
+    return json.dumps(data, ensure_ascii=False)
+
+
+def _truncate_observation_for_scratchpad(observation: str) -> str:
+    limit = _OBSERVATION_MAX_CHARS
+    if limit <= 0 or len(observation) <= limit:
+        return observation
+    reserve = 420
+    head = min(len(observation) - 1, max(400, limit - reserve))
+    if head < 1:
+        head = min(200, len(observation) - 1)
+    omitted = len(observation) - head
+    return (
+        observation[:head]
+        + f"\n\n…[Observation 已压缩，省略约 {omitted} 字；关键结论已保留在以上片段，需要全文请 ReadFile 或重跑工具。]"
+    )
 
 
 def _parse_llm_decision(response: str) -> Dict[str, Any]:
@@ -60,7 +143,8 @@ def _format_conversation_history(
     lines = []
     for msg in sliced:
         role = "用户" if msg["role"] == "user" else "助手"
-        lines.append(f"{role}: {msg['content']}")
+        body = _truncate_history_message_content(str(msg["content"]))
+        lines.append(f"{role}: {body}")
     return "\n".join(lines)
 
 
@@ -224,7 +308,9 @@ def run_agent_engine(
                     else:
                         r = str(result)
                         print(f"Observation: {r[:800]}{'…' if len(r) > 800 else ''} （全文 {len(r)} 字符）")
-                current_prompt += f"\n{response}\nObservation: {result}\n"
+                response_for_prompt = _compact_action_json_for_scratchpad(response)
+                observation_for_prompt = _truncate_observation_for_scratchpad(str(result))
+                current_prompt += f"\n{response_for_prompt}\nObservation: {observation_for_prompt}\n"
 
                 if repeated_action_count >= 2:
                     current_prompt += (

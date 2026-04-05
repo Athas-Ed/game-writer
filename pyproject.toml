@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "personal-agent"
+name = "game-writer"
 version = "0.1.0"
 description = "A game writing assistant workbench (Streamlit + tool/skill agent)."
 readme = "README.md"
@@ -36,5 +36,11 @@ exclude = ["venv*", "venv_skills*", "data*", "logs*", "tmp*", "skills*"]
 [tool.pytest.ini_options]
 markers = [
   "integration: tests that hit network/external services",
+]
+filterwarnings = [
+  # modelscope-agent 依赖 jieba；jieba 仍使用 pkg_resources，在较新 setuptools 下会告警，与本案无关
+  "ignore:pkg_resources is deprecated as an API:UserWarning",
+  # llama_index 在 Python 3.14+ 上对 pydantic v1 的提示；第三方库未跟进前可忽略
+  "ignore:Core Pydantic V1 functionality isn't compatible:UserWarning",
 ]
 

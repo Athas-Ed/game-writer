@@ -1,23 +1,40 @@
-# Personal Agent：游戏编剧工作台（Streamlit + Tool/Skill Agent）
+# Game-writer：游戏编剧工作台（Streamlit + Tool/Skill Agent）
 
 面向“游戏编剧/世界观设定”场景的个人工作台：用 **对话式 Agent** 串联 **设定库检索** 与 **技能插件**，把“写作、校对、导出、版本管理”等动作做成可重复的工作流。
 
-- **我做了什么**：在约一周时间内，我主导了该工作台从 0 到 1 的技术选型与整体方案设计，并采用 AI 辅助开发（Cursor）快速落地实现。我主要负责需求拆解、架构分层与关键约束（如 JSON-only Agent 协议、工具/技能边界、RAG 可选与降级策略）、测试与可交付形态（Windows 一键启动脚本、Docker、CI 镜像发布）。在实现过程中，我对 AI 生成代码进行持续审阅、集成与回归验证，确保功能可用、行为可控、结构可扩展。
-- **交付物**：提供可下载的 zip 包（解压后按 README 配置 `.env`，使用 `run.bat` 一键启动；使用者需自行配置 LLM API 与网络代理）。
-- **验收标准**：
-  - `run.bat` 可一键启动并正常打开网页端
-  - `pytest` 全绿
-  - **RAG 关闭**时基础能力可用（不被向量依赖绑死）
-  - 技能诊断通过（Runner 可加载、`run()` 可调用）
-  - 网页端实操成功：生成指定内容并保存为 Markdown 文件
+- **我做了什么**
+  - 约 **一周**内完成从 0→1：**技术选型、整体方案、主导落地**（AI 辅助开发：Cursor）。
+  - **需求拆解、架构分层**；敲定 **JSON-only 协议**、工具/技能边界、**RAG 可选与降级**、skills 迭代等关键约束。
+  - 对生成代码持续 **审阅、集成与回归**，保证功能可用、行为可控、结构可扩展。
+
+- **交付物**
+  - 可下载 **zip**：解压后按 README 配置 **`.env`**，**`run.bat` 一键启动**。
+  - 使用者自备：**LLM API**；若需访问外网则自行配置 **代理**。
+
+- **验收标准**
+  - **`run.bat`** 可启动并正常打开网页端。
+  - **`pytest` 全绿**。
+  - **RAG 关闭**时核心能力仍可用（不依赖向量链路）。
+  - **技能诊断**通过：Runner 可加载、**`run()`** 可调用。
+  - 网页端实操：能生成指定内容并 **保存为 Markdown**。
 
 ## 核心亮点（面试官可快速扫读）
 
-- **可控的 Agent 引擎（JSON-only ReAct）**：模型每一步**只能输出一个 JSON**，且只能是 `action`（请求工具）或 `final`（最终输出）。涉及真实操作（读写文件/检索/技能执行）时，必须先 `action` 调工具并等待 **Observation** 回写（例如：未看到 `WriteFile` 的 Observation 之前不得在 `final` 声称已写入）。配合最大步数/历史轮数与 INFO/DEBUG 日志，整体 **可复现、可调试、可追踪**。
-- **能力边界清晰的工具注册**：工具集中在统一 registry 中（读/写/检索/技能/偏好等），输入输出协议一致（例如 `WriteFile=相对路径|正文`），便于审计与扩展。
-- **设定库“证据检索”底座**：对 `data/**/*.md` 做分块 + 元数据，支持关键词证据检索与结构化路由（files/chunks/search），输出附带稳定引用，便于“证据驱动”的写作与改设定。
-- **RAG 做成“可选增强”且具备失败降级**：以“分块底座 + 关键词证据检索”为默认能力（输出自带证据与定位锚点 `chunk_ref`），在设定库变大/语义检索需求更强时再按需开启向量检索（Chroma + embedding）。启用时优先本地 embedding 模型；依赖缺失/加载失败/证书异常等会**自动降级**回关键词证据检索，避免“增强能力”绑死基础体验，强调稳健交付。
-- **技能插件化 + UI 工作流闭环**：采用 `skills/*/SKILL.md` + `scripts/run.py` 的轻量插件协议（约定 `run(input_text: str) -> str`），新增技能**无需改动核心引擎**，UI 自动扫描展示；支持中文别名与 Runner 诊断（入口存在/可导入/`run()` 可调用）。多方案输出可在 UI 中按钮选择继续细化，把“生成内容”变成“可操作流程”。
+- **JSON-only ReAct**
+  - 每步仅一个 JSON：`action`（调工具）或 `final`（收束输出）。
+  - 读写/检索等真实动作须先 `action`，经 **Observation** 回写后再 `final`（避免未调用工具却声称已写入）。
+  - 最大步数、历史截断与日志 → **可复现、可调试、可追踪**。
+- **设定库证据检索**
+  - `data/**/*.md` **分块 + 元数据**；关键词检索 + **SettingsRoute**（`list` / `files` / `chunks` / `search`）。
+  - 结果带稳定 **`chunk_ref`**，便于证据驱动写作与改设定。
+- **RAG 可选 + 降级**
+  - 默认：**分块 + 关键词**；按需开 **Chroma + 本地 embedding**。
+  - 依赖缺失、加载失败、证书等问题时 **自动退回关键词检索**，主流程不绑死向量能力。
+- **工具注册**
+  - 读/写/检索/技能/偏好等集中在统一 **registry**，入参协议一致（例：`WriteFile=相对路径|正文`）。
+- **技能插件与 UI 闭环**
+  - 约定 **`skills/*/SKILL.md` + `scripts/run.py`**（`run(input_text) -> str`），**增技能不改引擎**。
+  - UI 自动扫描；中文别名、Runner 诊断；多方案结果可用按钮继续细化。
 
 ## Demo（先留占位）
 
@@ -56,6 +73,19 @@ Streamlit UI (src/ui/streamlit_app.py)
               └─ config/preferences.md      # 偏好（可选写入，受开关控制）
 ```
 
+**Agent 对话主循环（示意）**：
+
+```mermaid
+graph LR
+    A[用户输入] --> B[Agent 引擎<br/>JSON-only ReAct]
+    B --> C{决策类型}
+    C -->|action| D[工具/技能执行]
+    D --> E[Observation 回写]
+    E --> B
+    C -->|final| F[输出结果]
+    F --> G[Streamlit UI]
+```
+
 ## 配置环境变量（.env）
 
 项目使用 `.env`（由 `python-dotenv` 自动读取）来配置 LLM 访问。
@@ -78,7 +108,15 @@ HTTPS_PROXY=http://127.0.0.1:26561
 
 注意：请不要把真实 `.env` 配到公共仓库/聊天记录里。
 
-## 快速开始（推荐 Docker）
+可选：当对话里曾出现大段设定原文、且已拆分进 `data/` 后，Agent 引擎会**自动缩短**历史消息与多步回溯里的超长 JSON/Observation，减少重复计费。默认值一般够用；若要调整（字符数，`0` 表示不限制该项）：
+
+```env
+AGENT_HISTORY_MESSAGE_MAX_CHARS=4000
+AGENT_SCRATCHPAD_ACTION_INPUT_MAX_CHARS=2500
+AGENT_OBSERVATION_MAX_CHARS=16000
+```
+
+## 快速开始
 
 适合面试官/快速体验：无需本地装 Python，只需要 Docker。
 
@@ -90,7 +128,7 @@ HTTPS_PROXY=http://127.0.0.1:26561
 docker run --rm -p 8501:8501 ^
   -v "%CD%\data:/app/data" ^
   --env-file .env ^
-  ghcr.io/athas-ed/personal-agent:latest
+  ghcr.io/athas-ed/game-writer:latest
 ```
 
 浏览器打开：`http://localhost:8501`
@@ -98,11 +136,11 @@ docker run --rm -p 8501:8501 ^
 ### 方式 B：从源码构建镜像
 
 ```bat
-docker build -t personal-agent .
+docker build -t game-writer .
 docker run --rm -p 8501:8501 ^
   -v "%CD%\data:/app/data" ^
   --env-file .env ^
-  personal-agent
+  game-writer
 ```
 
 ### 方式 C：Docker Compose（更稳：只挂载 data）
@@ -198,16 +236,12 @@ venv\Scripts\python -m streamlit run src\ui\streamlit_app.py ^
 
 Agent 通过 `RunSkill` 工具调用技能，并将返回内容展示到聊天里。
 
-## 额外脚本（可选）
-
-- `test.py`：用 `modelscope-agent` 方式发起测试（用于验证环境）
-
 ## 发布镜像（GHCR / GitHub Actions）
 
 本仓库已提供工作流：`.github/workflows/docker-ghcr.yml`。
 
-- 推送到 `master`：自动发布 `ghcr.io/athas-ed/personal-agent:latest`
-- 打 tag（例如 `v0.1.0`）并 push：自动发布 `ghcr.io/athas-ed/personal-agent:v0.1.0`
+- 推送到 `master`：自动发布 `ghcr.io/athas-ed/game-writer:latest`
+- 打 tag（例如 `v0.1.0`）并 push：自动发布 `ghcr.io/athas-ed/game-writer:v0.1.0`
 
 ```bat
 git tag v0.1.0
@@ -247,8 +281,6 @@ venv\Scripts\python -m pytest -q
 - Limitations（待补）
 
 ## 联系方式
-- **简历**：`（待填：PDF/在线简历链接）`
-- **Email**：`（待填）`
-- **GitHub**：`（待填）`
-- **作品集/博客**：`（可选，待填）`
-
+- **Email**：`zhoumi383@foxmail.com`
+- **GitHub**：`https://github.com/Athas-Ed/`
+- **QQ**：`1392830348`

@@ -83,6 +83,7 @@ def build_json_only_prompt(
 - 若需要换行，请在 JSON 字符串内使用 `\\n` 表示（不要直接把换行字符写进 JSON 字符串）。
 
 重要约束：
+- **节省上下文（强约束）**：当用户曾在对话中粘贴大段设定原文、且相关内容已拆分/保存到 `data/` 时，**禁止**在后续各轮 JSON 的 `input` 或 `final.output` 中再次全文粘贴该长文；应改用 **ReadFile / SearchDocs / SettingsRoute** 按需读取少量文件。仅在用户明确要求「逐字引用原文」或单次短引用（建议不超过约 500 字）时，才可粘贴片段。
 - 需要写入文件时，必须先输出一个 action：`tool`=WriteFile，并等待工具返回的 Observation；不得在未看到 WriteFile 的 Observation 之前以 final 声称已写入。
 - 每一轮只能输出一个 JSON（要么 action 要么 final）。
 - 当任务属于某个技能的典型能力（如“生成剧情大纲”）时，优先使用 RunSkill；否则优先直接用基础工具（ReadFile/WriteFile/LLM）。

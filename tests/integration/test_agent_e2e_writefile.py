@@ -17,6 +17,7 @@ def test_agent_e2e_writefile_real_llm(tmp_path: Path, monkeypatch):
         pytest.skip("DEEPSEEK_API_KEY not set")
 
     # 将写入路径映射到 tmp_path，避免污染真实 data/
+    from src.core.app_context import default_context
     import src.core.tool_registry as tr
 
     def write_file_to_tmp(file_path: str, content: str) -> str:
@@ -26,7 +27,7 @@ def test_agent_e2e_writefile_real_llm(tmp_path: Path, monkeypatch):
         return f"已写入: {file_path}"
 
     # 使用 build_tool_registry(ctx) 生成工具表，并替换 WriteFile 为 tmp 写入
-    ctx = tr.default_context()
+    ctx = default_context()
     tools = tr.build_tool_registry(ctx)
     tools["WriteFile"]["func"] = write_file_to_tmp
 
