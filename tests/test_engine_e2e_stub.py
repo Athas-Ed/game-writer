@@ -85,6 +85,80 @@ def test_engine_end_to_end_writefile_with_stub_llm(monkeypatch, tmp_path: Path):
     assert written[0].read_text(encoding="utf-8") == "hello"
 
 
+def test_engine_rejects_final_claiming_saved_without_writefile(monkeypatch, tmp_path: Path):
+    """
+    模型若在未执行 WriteFile 的情况下 final 声称「已保存」，引擎应追加 Observation 并继续循环，
+    直至出现「已写入:」成功结果后才允许结束（对应用户反馈的「假保存」问题）。
+    """
+    replies = iter(
+        [
+            '{"type":"final","output":"已保存至 data/剧情大纲/x.md"}',
+            '{"type":"action","tool":"WriteFile","input":"data/剧情大纲/x.md|body"}',
+            '{"type":"final","output":"完成"}',
+        ]
+    )
+
+    def fake_llm_generate(_prompt: str, temperature: float = 0.7) -> str:  # noqa: ARG001
+        return next(replies)
+
+    written: list[Path] = []
+
+    def write_file_stub(file_path: str, content: str) -> str:
+        target = tmp_path / file_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        written.append(target)
+        return f"已写入: {file_path}"
+
+    def build_tool_registry_stub(_ctx: AppContext):
+        return {
+            "WriteFile": {"func": write_file_stub, "description": "stub"},
+            "ReadFile": {"func": lambda p: "", "description": "stub"},
+            "LLM": {"func": lambda p: "", "description": "stub"},
+            "RunSkill": {"func": lambda p: "", "description": "stub"},
+            "ListPreferences": {"func": lambda p: "无", "description": "stub"},
+            "ProposePreference": {"func": lambda p: p, "description": "stub"},
+            "UpdatePreferences": {"func": lambda p: "ok", "description": "stub"},
+            "DeleteFile": {"func": lambda p: "ok", "description": "stub"},
+            "DeleteFiles": {"func": lambda p: "ok", "description": "stub"},
+            "SearchDocs": {"func": lambda p: "ok", "description": "stub"},
+        }
+
+    def normalize_write_path_stub(_ctx: AppContext, p: str) -> str:
+        p = p.replace("\\", "/").lstrip("./")
+        if p.startswith("角色设定/"):
+            return "data/" + p
+        return p
+
+    import src.core.engine as engine
+
+    monkeypatch.setattr(engine, "llm_generate", fake_llm_generate)
+    monkeypatch.setattr(engine, "build_tool_registry", build_tool_registry_stub)
+    monkeypatch.setattr(engine, "get_skills_catalog", lambda _ctx: {})
+    monkeypatch.setattr(engine, "get_preferences_text", lambda _ctx: "无")
+    monkeypatch.setattr(engine, "normalize_write_path_for_tool", normalize_write_path_stub)
+
+    out = engine.run_agent_engine(
+        user_input="把大纲保存到 data/剧情大纲/x.md",
+        max_steps=6,
+        conversation_history=[],
+        history_turns=0,
+        flags=AgentRuntimeFlags(log_level="NONE", prefs_enabled=True),
+        ctx=AppContext(
+            project_root=tmp_path,
+            skills_root=tmp_path / "skills",
+            config_root=tmp_path / "config",
+            data_root=tmp_path / "data",
+            output_targets_path=tmp_path / "config/output_targets.json",
+            preferences_path=tmp_path / "config/preferences.md",
+        ),
+    )
+
+    assert out == "完成"
+    assert written, "expected WriteFile after guard blocked fake-save final"
+    assert written[0].read_text(encoding="utf-8") == "body"
+
+
 def test_engine_end_to_end_runskill_with_stub_llm(monkeypatch):
     """
     端到端（稳定版，不走网络）：

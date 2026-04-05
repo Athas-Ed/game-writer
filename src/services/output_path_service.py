@@ -13,7 +13,15 @@ class OutputTargetsCache:
     mtime: Optional[float]
 
 
-DEFAULT_OUTPUT_TARGETS: Dict[str, str] = {"角色设定": "data/角色设定", "背景设定": "data/背景设定"}
+DEFAULT_OUTPUT_TARGETS: Dict[str, str] = {
+    "世界观": "data/世界观",
+    "关键场景": "data/关键场景",
+    "关键对话": "data/关键对话",
+    "剧情大纲": "data/剧情大纲",
+    "剧情片段": "data/剧情片段",
+    "背景设定": "data/背景设定",
+    "角色设定": "data/角色设定",
+}
 
 
 def load_output_targets(output_targets_path: Path, cache: Optional[OutputTargetsCache] = None) -> OutputTargetsCache:

@@ -63,8 +63,10 @@ def _compact_action_json_for_scratchpad(response: str) -> str:
         return response
     start = text.find("{")
     end = text.rfind("}")
+    slice_raw = text[start : end + 1]
+    balanced = _extract_first_balanced_json_object(text)
     try:
-        data = json.loads(text[start : end + 1])
+        data = json.loads(balanced if balanced is not None else slice_raw)
     except Exception:
         if len(text) > 12_000:
             return text[:8000] + f"\n…[JSON 解析失败且过长已截断，共 {len(text)} 字符]"
@@ -74,6 +76,11 @@ def _compact_action_json_for_scratchpad(response: str) -> str:
     inp = data.get("input", "")
     if not isinstance(inp, str) or len(inp) <= limit:
         return response
+    # setting-splitter 的 payload 常为整篇设定原文；压缩会破坏后续轮次里的 JSON 与 Observation 对齐，且误导模型重贴/误删
+    if data.get("tool") == "RunSkill":
+        head_raw = inp.split("|", 1)[0].strip()
+        if head_raw.lower() == "setting-splitter" or head_raw in {"设定拆分", "拆分设定", "拆分器"}:
+            return response
     tail_keep = min(400, limit // 4)
     head_keep = limit - tail_keep
     omitted = len(inp) - head_keep - tail_keep
@@ -100,15 +107,140 @@ def _truncate_observation_for_scratchpad(observation: str) -> str:
     )
 
 
+def _normalize_final_output(raw: str, *, max_unwrap: int = 4) -> str:
+    """
+    模型偶发把整段 {"type":"final","output":"..."} 当作字符串塞进 output，导致用户看到套娃 JSON。
+    若内层仍是 type=final，则展开为内层 output（最多 max_unwrap 次）。
+    """
+    s = (raw or "").strip()
+    for _ in range(max_unwrap):
+        if not s.startswith("{"):
+            break
+        try:
+            obj = json.loads(s)
+        except Exception:
+            break
+        if not isinstance(obj, dict) or obj.get("type") != "final":
+            break
+        inner = obj.get("output", "")
+        if not isinstance(inner, str):
+            inner = "" if inner is None else str(inner)
+        inner = inner.strip()
+        if not inner or inner == s:
+            break
+        s = inner
+    return s
+
+
+_FILE_WRITE_SUCCESS_PREFIX = "已写入:"
+
+
+def _user_requests_file_write(user_input: str) -> bool:
+    """用户是否明确要求把内容写入仓库文件（用于防「声称已保存但未 WriteFile」）。"""
+    u = user_input or ""
+    if "WriteFile" in u:
+        return True
+    if "落盘" in u:
+        return True
+    if any(p in u for p in ("没有保存", "没保存", "未保存", "并未保存")):
+        return True
+    save_ctx = any(
+        x in u
+        for x in (
+            ".md",
+            "markdown",
+            "Markdown",
+            "data/",
+            "剧情大纲",
+            "角色设定",
+            "背景设定",
+            "文件名",
+            "文件路径",
+            "保存到文件",
+            "写入文件",
+        )
+    )
+    if "保存" in u and save_ctx:
+        return True
+    if "写入" in u and save_ctx:
+        return True
+    # 大纲续写常见话术：选方案 + 展开/细化 +「保存」
+    if "保存" in u and any(k in u for k in ("展开", "细化", "方案", "大纲", "整理")):
+        return True
+    return False
+
+
+def _final_asserts_file_persisted(output: str) -> bool:
+    """final 是否在声称「已成功写入磁盘/已保存文件」。"""
+    o = output or ""
+    if not o:
+        return False
+    # 明确否认已落盘时，不按「声称已保存」处理
+    if any(p in o for p in ("未保存", "没有保存", "没保存", "尚未保存", "未能保存")):
+        return False
+    markers = (
+        "已保存",
+        "保存至",
+        "保存到",
+        "已成功保存",
+        "文件已保存",
+        "文件已成功保存",
+        "大纲已保存",
+        "已写入:",
+        "已写入：",
+        "写入成功",
+        "落盘",
+    )
+    return any(m in o for m in markers)
+
+
+def _extract_first_balanced_json_object(text: str) -> Optional[str]:
+    """
+    从文本中截取「第一个花括号配平的 JSON 对象」子串。
+    模型常在合法 JSON 后再多打一个 `}` 或夹杂尾部空白；若用 rfind('}') 整块去 loads 会失败，
+    进而被误判为 final，把整段协议 JSON 直接显示给用户。
+    """
+    i = text.find("{")
+    if i < 0:
+        return None
+    depth = 0
+    in_str = False
+    esc = False
+    n = len(text)
+    for j in range(i, n):
+        ch = text[j]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[i : j + 1]
+    return None
+
+
 def _parse_llm_decision(response: str) -> Dict[str, Any]:
     text = (response or "").strip()
     if not text:
         return {"type": "final", "output": ""}
-    if "{" in text and "}" in text:
+    json_candidate: Optional[str] = None
+    if "{" in text:
+        json_candidate = _extract_first_balanced_json_object(text)
+    if json_candidate is None and "{" in text and "}" in text:
         start = text.find("{")
         end = text.rfind("}")
         json_candidate = text[start : end + 1]
-    else:
+    if json_candidate is None:
         json_candidate = text
     try:
         data = json.loads(json_candidate)
@@ -119,7 +251,10 @@ def _parse_llm_decision(response: str) -> Dict[str, Any]:
     if data.get("type") == "action":
         return {"type": "action", "tool": data.get("tool"), "input": data.get("input", "")}
     if data.get("type") == "final":
-        return {"type": "final", "output": data.get("output", "")}
+        out = data.get("output", "")
+        if not isinstance(out, str):
+            out = "" if out is None else str(out)
+        return {"type": "final", "output": _normalize_final_output(out)}
     return {"type": "final", "output": text}
 
 
@@ -195,6 +330,7 @@ def run_agent_engine(
 
     repeated_action_count = 0
     last_action_signature: Optional[Tuple[str, str]] = None
+    had_writefile_ok = False
 
     for step in range(max_steps):
         if flags.is_debug:
@@ -268,6 +404,8 @@ def run_agent_engine(
                         if flags.is_debug:
                             print(f"[DEBUG] WriteFile path: {file_path!r}, content len: {len(content)}")
                         result = tools[tool_name]["func"](file_path, content)
+                        if str(result).lstrip().startswith(_FILE_WRITE_SUCCESS_PREFIX):
+                            had_writefile_ok = True
                 else:
                     if isinstance(tool_input, str):
                         tool_input = tool_input.replace("\\n", "\n")
@@ -323,6 +461,20 @@ def run_agent_engine(
 
         if decision.get("type") == "final":
             final_output = str(decision.get("output", "")).strip()
+            if (
+                _user_requests_file_write(user_input)
+                and _final_asserts_file_persisted(final_output)
+                and not had_writefile_ok
+            ):
+                current_prompt += (
+                    "\nObservation: 你的 final 声称已将内容保存/写入文件，但本轮尚未出现成功的 WriteFile 结果"
+                    "（应以「已写入: …」开头）。请先输出 JSON："
+                    '{"type":"action","tool":"WriteFile","input":"相对路径|正文（换行用\\\\n）"}'
+                    "，在看到成功 Observation 后再输出 type=final。"
+                    "另外：final.output 必须是面向用户的纯文本，禁止把另一层 "
+                    '{"type":"final","output":"..."} 当作字符串嵌套进 output。\n'
+                )
+                continue
             if flags.is_info:
                 print("\n=== Final Answer ===")
                 print(final_output)

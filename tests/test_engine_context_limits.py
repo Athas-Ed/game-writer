@@ -36,6 +36,13 @@ def test_compact_action_json_shortens_long_input(monkeypatch: pytest.MonkeyPatch
     assert "压缩" in data["input"] or "省略" in data["input"]
 
 
+def test_compact_action_json_skips_setting_splitter_runskill(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(engine, "_SCRATCHPAD_ACTION_INPUT_MAX_CHARS", 80)
+    payload = "setting-splitter|" + "Z" * 500
+    raw = json.dumps({"type": "action", "tool": "RunSkill", "input": payload}, ensure_ascii=False)
+    assert engine._compact_action_json_for_scratchpad(raw) == raw
+
+
 def test_compact_action_json_noop_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(engine, "_SCRATCHPAD_ACTION_INPUT_MAX_CHARS", 0)
     pad = "Y" * 500
