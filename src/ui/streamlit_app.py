@@ -182,10 +182,19 @@ def _render_chat(max_steps: int, history_turns: int) -> None:
                                 use_container_width=True,
                                 help=help_txt[:300] if help_txt else None,
                             ):
-                                choice = (
-                                    f"我选择{opt['label']}，请根据上一轮助手回复继续："
-                                    "展开该方案细节（或按上一轮说明保存/细化）。"
-                                )
+                                # 仅 2 个方案：dialogue-voice；否则通常为 outline-writer（3 案）。
+                                # 不得共用「展开该方案细节」，否则历史里仍有旧大纲时模型易误调用 outline-writer。
+                                if len(opts) == 2:
+                                    choice = (
+                                        f"我选择{opt['label']}，请根据上一轮助手回复继续："
+                                        "【对白】对选定方案润色、扩写（可加旁白与动作），需要保存时用 WriteFile 写入 "
+                                        "data/关键对话/；不要使用 outline-writer / 大纲写手。"
+                                    )
+                                else:
+                                    choice = (
+                                        f"我选择{opt['label']}，请根据上一轮助手回复继续："
+                                        "展开该方案细节（或按上一轮说明保存/细化）。"
+                                    )
                                 st.session_state.messages.append({"role": "user", "content": choice})
                                 st.session_state._pending_agent_prompt = choice
                                 st.session_state.chat_scroll_nonce += 1

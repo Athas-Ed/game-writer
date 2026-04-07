@@ -11,7 +11,7 @@ from src.core.tool_registry import (
     get_skills_catalog,
     normalize_write_path_for_tool,
 )
-from src.services.skills_service import resolve_skill_key
+from src.services.skills_service import augment_user_input_if_implicit_dialogue_scheme_pick, resolve_skill_key
 from src.tools.llm_tools import llm_generate
 
 # DEBUG 下打印上下文时的分块大小（单块过大易淹没控制台，故长 prompt 采用 头+尾）
@@ -318,13 +318,22 @@ def run_agent_engine(
     history_text = _format_conversation_history(conversation_history, history_turns)
     preferences_text = get_preferences_text(ctx)
 
+    effective_user_input = augment_user_input_if_implicit_dialogue_scheme_pick(
+        user_input, conversation_history
+    )
+    if flags.is_debug and effective_user_input != user_input:
+        print(
+            "[DEBUG] user_input augmented for implicit dialogue-voice scheme pick "
+            f"(+{len(effective_user_input) - len(user_input)} chars)"
+        )
+
     current_prompt = build_json_only_prompt(
         tool_descriptions=tool_descriptions,
         skill_descriptions=skill_descriptions,
         history_text=history_text,
         preferences_text=preferences_text,
         history_turns=history_turns,
-        user_input=user_input,
+        user_input=effective_user_input,
         prefs_enabled=flags.prefs_enabled,
     )
 

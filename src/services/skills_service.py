@@ -82,6 +82,19 @@ def build_alias_map(catalog: Dict[str, SkillMeta]) -> Dict[str, str]:
     return out
 
 
+def dialogue_voice_scheme_pick_payload(user_request: str) -> bool:
+    """
+    识别「对白 dialogue-voice」两套方案点选后，Streamlit 注入的续写指令。
+    此类请求若误入 outline-writer，会错当成大纲选型续写（历史里往往仍有大纲方案在更早轮次）。
+    """
+    u = user_request or ""
+    if "【对白】" in u:
+        return True
+    if "不要使用 outline-writer" in u or "不要使用大纲写手" in u:
+        return True
+    return False
+
+
 def outline_writer_request_is_selection_followup(user_request: str) -> bool:
     """
     判断是否为「已生成多套大纲之后」的选型/展开请求。
@@ -90,7 +103,10 @@ def outline_writer_request_is_selection_followup(user_request: str) -> bool:
     u = (user_request or "").strip()
     if not u or len(u) > 1600:
         return False
-    # 与 Streamlit「方案选择」按钮文案一致
+    # dialogue-voice 点选续写：不得按「大纲选型」处理
+    if dialogue_voice_scheme_pick_payload(u):
+        return False
+    # 与 Streamlit「方案选择」按钮文案一致（大纲 3 方案）
     if re.search(r"根据上一轮助手回复继续", u):
         return True
     if re.search(r"(我选择|我要|就选|采用|选定|选).{0,24}方案\s*[123一二三四五六七八九十]", u):
@@ -100,6 +116,82 @@ def outline_writer_request_is_selection_followup(user_request: str) -> bool:
     if re.search(r"(展开|细化).{0,12}方案\s*[123一二三四五六七八九十]", u):
         return True
     return False
+
+
+def last_assistant_content(
+    conversation_history: Optional[List[Dict[str, Any]]],
+) -> Optional[str]:
+    """取历史中最后一条非空助手消息正文。"""
+    if not conversation_history:
+        return None
+    for m in reversed(conversation_history):
+        if not isinstance(m, dict):
+            continue
+        if m.get("role") != "assistant":
+            continue
+        c = m.get("content")
+        if c is None:
+            continue
+        s = str(c).strip()
+        if s:
+            return s
+    return None
+
+
+def assistant_message_is_dialogue_voice_two_schemes(text: str) -> bool:
+    """
+    判断助手上一句是否来自 dialogue-voice（两套对白），用于手写「选方案1/2」时自动打【对白】标。
+    """
+    if not (text or "").strip():
+        return False
+    low = text.lower()
+    if "dialogue-voice" in low:
+        return True
+    if re.search(r"2\s*组对白", text):
+        return True
+    if "已执行技能" in text and "对白" in text and "方案" in text:
+        return True
+    return False
+
+
+def user_message_needs_dialogue_scheme_implicit_tag(user_input: str) -> bool:
+    """用户手写选型/续写，且尚未带【对白】等显式标记时返回 True（需结合上一句助手是否为对白）。"""
+    if dialogue_voice_scheme_pick_payload(user_input):
+        return False
+    u = (user_input or "").strip()
+    if not u:
+        return False
+    # 仅方案3、无方案1/2：更像大纲第三案，不自动标对白
+    if re.search(r"方案\s*3", u) and not re.search(r"方案\s*[12]", u):
+        return False
+    if re.search(r"(我选择|我要|就选|采用|选定).{0,40}方案\s*[12]", u):
+        return True
+    if "根据上一轮助手回复继续" in u and re.search(r"方案\s*[12]", u):
+        return True
+    if re.search(r"(展开|细化|扩充|续写).{0,24}该方案", u):
+        return True
+    return False
+
+
+def augment_user_input_if_implicit_dialogue_scheme_pick(
+    user_input: str,
+    conversation_history: Optional[List[Dict[str, Any]]],
+) -> str:
+    """
+    若上一轮助手为 dialogue-voice 两套对白，而用户本条像选型续写但未带【对白】，
+    则在 用户需求 末尾追加说明，避免模型结合更早轮次的大纲误判 outline-writer。
+    """
+    last = last_assistant_content(conversation_history)
+    if not last or not assistant_message_is_dialogue_voice_two_schemes(last):
+        return user_input
+    if not user_message_needs_dialogue_scheme_implicit_tag(user_input):
+        return user_input
+    suffix = (
+        "\n\n【对白】【由系统根据上一轮助手输出自动标注】"
+        "上一轮为 dialogue-voice 两套对白方案；请仅续写/润色选定对白，需要保存时用 WriteFile 写入 data/关键对话/。"
+        "不要使用 outline-writer / 大纲写手。"
+    )
+    return (user_input or "").rstrip() + suffix
 
 
 def resolve_skill_key(raw_name: str, catalog: Dict[str, SkillMeta]) -> Optional[str]:
@@ -216,6 +308,13 @@ def run_skill(payload: str, state: SkillsState, skills_root: Path) -> str:
         hint = _skill_listing_with_aliases(state.loaded)
         return f"未找到技能: {skill_name}。\n{hint}"
     skill_name = resolved
+
+    if skill_name == "outline-writer" and dialogue_voice_scheme_pick_payload(user_request):
+        return (
+            "【请勿调用大纲写手】本轮请求标题为对白 dialogue-voice 的「方案1/方案2」点选续写，不是剧情大纲选型。"
+            "请根据历史对话中助手刚给出的两组对白之一，用 LLM 润色扩写（可加旁白/动作）；需要保存时用 WriteFile 写入"
+            " `data/关键对话/` 或用户指定路径。禁止调用 RunSkill 的 outline-writer。"
+        )
 
     if skill_name == "outline-writer" and outline_writer_request_is_selection_followup(user_request):
         return (
