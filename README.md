@@ -18,6 +18,8 @@
   - **技能诊断**通过：Runner 可加载、**`run()`** 可调用。
   - 网页端实操：能生成指定内容并 **保存为 Markdown**。
 
+
+
 ## 核心亮点
 
 - **JSON-only ReAct**
@@ -36,9 +38,13 @@
   - 约定 **`skills/*/SKILL.md` + `scripts/run.py`**（`run(input_text) -> str`），**增技能不改引擎**。
   - UI 自动扫描；中文别名、Runner 诊断；多方案结果可用按钮继续细化。
 
+
+
 ## Demo
 
 - bilibili：[【AI Agent 实战】游戏编剧工作台功能演示（开源）](https://www.bilibili.com/video/BV168DaBSEou/?share_source=copy_web&vd_source=603cd91969c3f5e2d672d7eca8520091) 
+
+
 
 ## 功能概览
 
@@ -46,6 +52,8 @@
 - **资料库**：只读预览 `data/**/*.md`
 - **技能目录**：扫描 `skills/*/SKILL.md` 并展示调用方式（含中文别名）
 - **开发工具（可选）**：健康检查、API 最小请求测试、技能 Runner 诊断、RAG 开关等
+
+
 
 ## 内置技能一览
 
@@ -56,6 +64,8 @@
 - `consistency-checker`：一致性检查（设定/角色/时间线等）
 - `version-control`：版本/变更管理相关动作
 - `setting-splitter`：将设定拆分成更可检索/可复用的结构
+
+
 
 ## 架构速览
 
@@ -83,6 +93,8 @@ graph LR
     F --> G[Streamlit UI]
 ```
 
+
+
 ## 配置环境变量（.env）
 
 项目使用 `.env`（由 `python-dotenv` 自动读取）来配置 LLM 访问。
@@ -105,13 +117,7 @@ HTTPS_PROXY=http://127.0.0.1:26561
 
 注意：请不要把真实 `.env` 配到公共仓库/聊天记录里。
 
-可选：当对话里曾出现大段设定原文、且已拆分进 `data/` 后，Agent 引擎会**自动缩短**历史消息与多步回溯里的超长 JSON/Observation，减少重复计费。默认值一般够用；若要调整（字符数，`0` 表示不限制该项）：
 
-```env
-AGENT_HISTORY_MESSAGE_MAX_CHARS=4000
-AGENT_SCRATCHPAD_ACTION_INPUT_MAX_CHARS=2500
-AGENT_OBSERVATION_MAX_CHARS=16000
-```
 
 ## 快速开始
 
@@ -151,51 +157,6 @@ docker compose up --build
 ```bat
 docker compose down
 ```
-
-## 快速体验
-
-以下两个核心操作无需任何准备，复制指令发送即可看到效果。
-
-### 1. 拆分长文本设定
-
-复制下方命令并发送：
-
-```text
-帮我拆分以下长文本设定集并保存到合适的位置：
-
-### 势力：星环联盟
-一个致力于太空探索的组织，总部位于火星前哨站。
-
-### 地点：火星前哨站
-位于火星乌托邦平原，设有科研区、居住区和能源中心。
-
-### 人物：艾琳娜
-星环联盟首席工程师，擅长能源系统修复，性格冷静果断。
-```
-
-Agent 会自动拆分成多个 Markdown 文件，保存到 `data/` 对应目录。你可以在上方“资料库”中浏览生成的文件。
-
-### 2. 构思角色
-
-复制下方命令并发送：
-
-```text
-帮我构思一个隶属于该势力的特工，擅长格斗、喜欢养花，与现有的角色建立联系，其余设定合理扩充
-```
-
-Agent 会自动生成角色设定的 Markdown 文件，保存到 `data/角色设定/`目录。你可以在上方“资料库”中浏览生成的文件。
-
-### 3. 生成对白（含方案选择）
-
-复制下方命令并发送：
-
-```text
-生成新角色与艾琳娜的对白方案，保存到关键对话下。
-```
-
-Agent 会返回两种语气风格的对白，并提供按钮供你选择。选中的方案将保存到 `data/关键对话/` 目录。
-
-> 更多功能（剧情大纲、版本管理、地点补充）请观看 [完整演示视频](https://www.bilibili.com/video/BV168DaBSEou/?share_source=copy_web&vd_source=603cd91969c3f5e2d672d7eca8520091)。
 
 
 
@@ -255,15 +216,54 @@ venv\Scripts\python -m streamlit run src\ui\streamlit_app.py ^
   --server.address=localhost --browser.gatherUsageStats=false
 ```
 
-## 使用方法
 
-1. 在网页左侧选择模式：
-   - 工作模式：聚焦聊天、资料库和技能
-   - 开发模式：额外显示 API 测试与技能 Runner 检查
-2. 在“对话”输入你的需求，例如：
-   - “帮我写一个剧情大纲：主角在废弃车站发现一封旧信。”
-3. Agent 会优先选择合适技能（见「内置技能一览」）。
-4. 若技能需要读取本地设定，会从 `data/` 汇总读取相关 Markdown。
+
+## 快速体验
+
+以下两个核心操作无需任何准备，复制指令发送即可看到效果。
+
+### 1. 拆分长文本设定
+
+复制下方命令并发送：
+
+```text
+帮我拆分以下长文本设定集并保存到合适的位置：
+
+### 势力：星环联盟
+一个致力于太空探索的组织，总部位于火星前哨站。
+
+### 地点：火星前哨站
+位于火星乌托邦平原，设有科研区、居住区和能源中心。
+
+### 人物：艾琳娜
+星环联盟首席工程师，擅长能源系统修复，性格冷静果断。
+```
+
+Agent 会自动拆分成多个 Markdown 文件，保存到 `data/` 对应目录。你可以在上方“资料库”中浏览生成的文件。
+
+### 2. 构思角色
+
+复制下方命令并发送：
+
+```text
+帮我构思一个隶属于该势力的特工，擅长格斗、喜欢养花，与现有的角色建立联系，其余设定合理扩充
+```
+
+Agent 会自动生成角色设定的 Markdown 文件，保存到 `data/角色设定/`目录。你可以在上方“资料库”中浏览生成的文件。
+
+### 3. 生成对白（含方案选择）
+
+复制下方命令并发送：
+
+```text
+生成新角色与艾琳娜的对白方案，保存到关键对话下。
+```
+
+Agent 会返回两种语气风格的对白，并提供按钮供你选择。选中的方案将保存到 `data/关键对话/` 目录。
+
+> 更多功能（剧情大纲、版本管理、地点补充）请观看 [完整演示视频](https://www.bilibili.com/video/BV168DaBSEou/?share_source=copy_web&vd_source=603cd91969c3f5e2d672d7eca8520091)。
+
+
 
 ## 技能扩展说明
 
@@ -274,24 +274,9 @@ venv\Scripts\python -m streamlit run src\ui\streamlit_app.py ^
 
 Agent 通过 `RunSkill` 工具调用技能，并将返回内容展示到聊天里。
 
-## 发布镜像（GHCR / GitHub Actions）
 
-本仓库已提供工作流：`.github/workflows/docker-ghcr.yml`。
 
-- 推送到 `master`：自动发布 `ghcr.io/athas-ed/game-writer:latest`
-- 打 tag（例如 `v0.1.0`）并 push：自动发布 `ghcr.io/athas-ed/game-writer:v0.1.0`
-
-```bat
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-## Roadmap / Limitations（可选，待你决定是否保留）
-
-> **Roadmap**：后续计划做什么（1–5 条即可，偏“用户价值/工程能力”）。  
-> **Limitations**：当前版本的边界与已知限制（让评审更信任你“知道自己没做什么”，也便于面试时展开）。
-
-### Roadmap
+## Roadmap | 后续计划
 
 1. 在实际使用中继续完善现有功能  
    - 优化主流程的稳定性与可控性（日志、错误提示、降级策略等）
@@ -303,12 +288,16 @@ git push origin v0.1.0
    - 引入更清晰的模块边界与可观测性（配置、权限、审计、成本统计等）
    - 为团队协作预留形态（多项目/多知识库、环境隔离、发布与回滚策略等）
 
-### Limitations
+
+
+## Limitations | 当前边界
 
 1. 时间与 tokens 开销待优化  
    - 多轮对话与多步工具链会带来额外调用成本；复杂任务下响应时间仍可能偏长
 2. 只适合个人自用，难以汇入企业级工作流  
    - 目前偏“单机 + 个人知识库 + 手动流程”，缺少企业常见的鉴权、权限分级、审计/合规与团队协作能力
+
+
 
 ## 联系方式
 - **Email**：`zhoumi383@foxmail.com`
