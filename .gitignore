@@ -8,6 +8,7 @@ __pycache__/
 
 # IDE/editor
 .idea/
+.cursor/
 
 # App runtime dirs
 logs/
