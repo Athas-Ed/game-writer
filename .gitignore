@@ -1,6 +1,7 @@
 .env
 venv
 venv_skills
+.venv_train/
 
 # Python cache
 __pycache__/
@@ -27,6 +28,12 @@ data/**
 # Local vector index / embeddings / large assets
 .vector_index/
 models/
+
+# Training outputs (do not commit)
+training_outputs/
+wandb/
+mlruns/
+runs/
 
 # Personal study notes (do not commit)
 个人学习/

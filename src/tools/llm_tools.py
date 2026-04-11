@@ -7,8 +7,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 proxy = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
-api_key = os.getenv("DEEPSEEK_API_KEY")
-base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+api_key = os.getenv("LLM_API_KEY") or os.getenv("DEEPSEEK_API_KEY") or ""
+base_url = os.getenv("LLM_BASE_URL") or os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+model_name = os.getenv("LLM_MODEL") or os.getenv("DEEPSEEK_MODEL") or "deepseek-chat"
 
 def _build_timeout() -> httpx.Timeout:
     # 默认给较宽松的读超时，避免生成较长内容时频繁 ReadTimeout
@@ -30,14 +31,14 @@ else:
     client = httpx.Client(verify=False, timeout=TIMEOUT)
 
 def llm_generate(prompt: str, temperature: float = 0.7) -> str:
-    """调用 DeepSeek API 生成文本"""
+    """调用 OpenAI 兼容 ChatCompletions API 生成文本（默认 DeepSeek；也可指向本地推理服务）。"""
     url = f"{base_url}/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "deepseek-chat",
+        "model": model_name,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature
     }

@@ -28,6 +28,20 @@ dev = [
   "pytest==8.4.2",
 ]
 
+# 训练/微调用（可选）：用于学习实践 QLoRA / Transformers，不影响主应用安装体积。
+# 说明：bitsandbytes 在原生 Windows 上兼容性不稳定，推荐在 WSL2 + CUDA 环境使用（见 training/README.md）。
+train = [
+  "transformers==4.56.2",
+  "datasets==4.1.1",
+  "accelerate==1.10.1",
+  "peft==0.17.1",
+  "trl==0.23.0",
+  "safetensors==0.6.2",
+  "bitsandbytes==0.47.0",
+  "fastapi==0.116.1",
+  "uvicorn==0.35.0",
+]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*"]
